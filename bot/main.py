@@ -15,6 +15,7 @@ from bot.db.engine import Database
 from bot.handlers import get_root_router
 from bot.logging_config import setup_logging
 from bot.middlewares.user_activity import UserActivityMiddleware
+from bot.profile import set_bot_profile
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ async def main() -> None:
 
     await bot.delete_webhook(drop_pending_updates=True)
     await set_bot_commands(bot)
+    await set_bot_profile(bot)
     try:
         # config/semaphore/db передаются как extra kwargs в start_polling —
         # aiogram сам прокинет их в обработчики и middleware по имени
