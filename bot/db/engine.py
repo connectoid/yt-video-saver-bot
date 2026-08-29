@@ -19,10 +19,22 @@ _ADDED_COLUMNS: dict[tuple[str, str], str] = {
     ("events", "title"): "VARCHAR(300)",
 }
 
+# (имя_индекса) -> (таблица, колонки по порядку) для CREATE INDEX на уже
+# существующей таблице — тот же смысл, что и у _ADDED_COLUMNS, только для
+# индексов, добавленных после первого релиза (см. Index в
+# Event.__table_args__, bot/db/models.py). SQLite понимает
+# "CREATE INDEX IF NOT EXISTS" нативно, поэтому, в отличие от колонок,
+# отдельная проверка "уже есть или нет" через inspector не нужна — запрос
+# идемпотентен сам по себе.
+_ADDED_INDEXES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "ix_events_user_id_created_at": ("events", ("user_id", "created_at")),
+}
+
 
 def _sync_migrate(sync_conn) -> None:
     inspector = inspect(sync_conn)
     existing_tables = set(inspector.get_table_names())
+
     for (table_name, column_name), ddl_type in _ADDED_COLUMNS.items():
         if table_name not in existing_tables:
             # Таблицы вообще ещё нет — её создаст create_all с уже полной
@@ -33,6 +45,16 @@ def _sync_migrate(sync_conn) -> None:
             continue
         sync_conn.execute(
             text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl_type}")
+        )
+
+    # Индексы — после колонок: если бы индексу когда-нибудь понадобилась
+    # колонка из _ADDED_COLUMNS выше, она должна успеть появиться раньше.
+    for index_name, (table_name, columns) in _ADDED_INDEXES.items():
+        if table_name not in existing_tables:
+            continue
+        columns_sql = ", ".join(columns)
+        sync_conn.execute(
+            text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns_sql})")
         )
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -59,6 +59,18 @@ class Event(Base):
     """
 
     __tablename__ = "events"
+    __table_args__ = (
+        # Составной индекс под запрос /history ("N последних скачиваний
+        # ЭТОГО пользователя") — отдельных индексов на user_id и на
+        # created_at по отдельности недостаточно: без составного SQLite
+        # может пойти по индексу created_at и сканировать вглубь, пока не
+        # наберёт нужное количество строк ИМЕННО этого юзера, что при
+        # большой общей нагрузке (много активных пользователей) может
+        # означать просмотр гораздо большего числа строк, чем нужно.
+        # Добавлено позже, чем остальная таблица — см. _ADDED_INDEXES в
+        # bot/db/engine.py, там же CREATE INDEX для уже существующих БД.
+        Index("ix_events_user_id_created_at", "user_id", "created_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), index=True)

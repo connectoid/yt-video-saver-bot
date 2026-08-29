@@ -1,11 +1,13 @@
 """Проверка Database.create_all() как мини-миграции для уже существующих БД.
 
 На проде events уже была создана ДО того, как в ней появилась колонка
-title (см. bot/db/engine.py::_sync_migrate) — Base.metadata.create_all сам
-по себе такую колонку в существующую таблицу не добавит, нужен явный
-ALTER TABLE. Здесь эмулируем "старую" БД (создаём events по старой схеме
-руками, без title) и проверяем, что после create_all() колонка появляется,
-а старые строки остаются читаемыми (title у них — NULL, не ошибка).
+title и составной индекс (user_id, created_at) (см.
+bot/db/engine.py::_sync_migrate) — Base.metadata.create_all сам по себе ни
+колонку, ни индекс в существующую таблицу не добавит, нужны явные ALTER
+TABLE / CREATE INDEX. Здесь эмулируем "старую" БД (создаём events по
+старой схеме руками, без title и без составного индекса) и проверяем, что
+после create_all() и то, и другое появляется, а старые строки остаются
+читаемыми (title у них — NULL, не ошибка).
 """
 
 import sqlalchemy as sa
@@ -48,6 +50,13 @@ async def test_create_all_adds_title_column_to_existing_table(tmp_path):
         event = result.scalar_one()
         assert event.title is None  # старая строка — колонки ещё не было
         assert event.height == 720
+
+    # составной индекс тоже должен появиться на уже существующей таблице
+    async with database.engine.connect() as conn:
+        index_names = {
+            row[1] for row in (await conn.execute(sa.text("PRAGMA index_list(events)"))).all()
+        }
+        assert "ix_events_user_id_created_at" in index_names
 
     await database.close()
 
