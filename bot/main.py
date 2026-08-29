@@ -14,6 +14,7 @@ from bot.config import load_config
 from bot.db.engine import Database
 from bot.handlers import get_root_router
 from bot.logging_config import setup_logging
+from bot.middlewares.feedback_capture import FeedbackCaptureMiddleware
 from bot.middlewares.user_activity import UserActivityMiddleware
 from bot.profile import set_bot_profile
 
@@ -51,6 +52,12 @@ async def main() -> None:
     # один обработчик в итоге не совпал.
     dp.message.outer_middleware(UserActivityMiddleware())
     dp.callback_query.outer_middleware(UserActivityMiddleware())
+
+    # Перехват сообщения для /feedback — ПОСЛЕ UserActivityMiddleware (чтобы
+    # апсерт пользователя всё равно отработал), но раньше роутеров: если
+    # пользователь только что вызвал /feedback, следующее его сообщение
+    # уходит администратору и не доходит до обычных обработчиков.
+    dp.message.outer_middleware(FeedbackCaptureMiddleware())
 
     # Общий семафор ограничивает число одновременных скачиваний yt-dlp,
     # чтобы не положить сервер при наплыве пользователей.

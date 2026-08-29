@@ -9,6 +9,7 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from bot.config import Config
@@ -16,6 +17,7 @@ from bot.db import crud
 from bot.db.engine import Database
 from bot.db.models import EventStatus, Stage
 from bot.filters.youtube_link import YouTubeLinkFilter
+from bot.handlers.feedback import FeedbackStates
 from bot.keyboards.resolution import build_resolution_keyboard
 from bot.middlewares.daily_limit import DailyLimitMiddleware
 from bot.services import ytdlp_service
@@ -337,24 +339,39 @@ async def handle_resolution_choice(
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: Message) -> None:
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    """/cancel — универсальная отмена "того, что сейчас происходит" для
+    пользователя: активного скачивания и/или ожидания сообщения для
+    /feedback (bot/handlers/feedback.py). Оба независимы и проверяются по
+    отдельности — можно, например, попасть в /feedback, находясь при этом
+    без активных загрузок, и наоборот."""
     user_id = message.from_user.id if message.from_user else None
     entry = active_downloads.get(user_id) if user_id is not None else None
-    if entry is None:
-        await message.answer("Сейчас у вас нет активных скачиваний.")
-        return
 
-    task, cancel_event = entry
-    # Оба механизма нужны: cancel_event останавливает сам поток yt-dlp (если
-    # скачивание уже реально идёт — иначе поток докачает всё впустую и
-    # впустую займёт канал/CPU уже после того, как мы всё равно всё бросили),
-    # task.cancel() — прерывает ожидание своей очереди/слота в семафоре или
-    # отправку файла в Telegram, если до потока ещё не дошло или уже после
-    # него. Само подтверждение пользователю уходит из handle_resolution_choice
-    # (там обновляется то же статусное сообщение, что показывало прогресс).
-    cancel_event.set()
-    task.cancel()
-    await message.answer("Отменяю скачивание...")
+    cancelled_something = False
+
+    if entry is not None:
+        task, cancel_event = entry
+        # Оба механизма нужны: cancel_event останавливает сам поток yt-dlp
+        # (если скачивание уже реально идёт — иначе поток докачает всё
+        # впустую и займёт канал/CPU уже после того, как мы всё равно всё
+        # бросили), task.cancel() — прерывает ожидание своей очереди/слота
+        # в семафоре или отправку файла в Telegram, если до потока ещё не
+        # дошло или уже после него. Финальное сообщение про отмену самого
+        # скачивания уходит из handle_resolution_choice (там обновляется
+        # то же статусное сообщение, что показывало прогресс).
+        cancel_event.set()
+        task.cancel()
+        await message.answer("Отменяю скачивание...")
+        cancelled_something = True
+
+    if await state.get_state() == FeedbackStates.waiting_for_message.state:
+        await state.clear()
+        await message.answer("Хорошо, ничего не отправляю администратору.")
+        cancelled_something = True
+
+    if not cancelled_something:
+        await message.answer("Сейчас нечего отменять.")
 
 
 @router.message(F.text)

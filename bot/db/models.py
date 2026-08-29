@@ -19,6 +19,10 @@ class Stage:
 
     INFO_FETCH = "info_fetch"
     DOWNLOAD = "download"
+    # Не часть воронки "ссылка → видео" — сообщения через /feedback
+    # логируются отдельным этапом, чтобы не путаться со скачиваниями в
+    # /stats (см. bot/middlewares/feedback_capture.py).
+    FEEDBACK = "feedback"
 
 
 class EventStatus:

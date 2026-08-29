@@ -42,6 +42,7 @@ async def cmd_stats(message: Message, config: Config, db: Database | None = None
         f"Заблокировано дневным лимитом сегодня: {stats.blocked_by_limit_today}",
         f"Заблокированное видео (запрошено) сегодня: {stats.blocked_video_today}",
         f"Отменено пользователями сегодня: {stats.cancelled_today}",
+        f"Сообщений через /feedback сегодня: {stats.feedback_today}",
     ]
 
     if stats.failures_today_by_status:

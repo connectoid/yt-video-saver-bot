@@ -15,6 +15,7 @@ PUBLIC_COMMANDS: list[BotCommand] = [
     BotCommand(command="history", description="Последние скачанные видео"),
     BotCommand(command="cancel", description="Отменить текущее скачивание"),
     BotCommand(command="terms", description="Условия использования"),
+    BotCommand(command="feedback", description="Написать администратору"),
 ]
 
 

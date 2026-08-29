@@ -178,6 +178,7 @@ class Stats:
     blocked_by_limit_today: int
     blocked_video_today: int
     cancelled_today: int
+    feedback_today: int
     failures_today_by_status: dict[str, int]
 
 
@@ -255,6 +256,18 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             )
         ).scalar_one()
 
+        feedback_today = (
+            await session.execute(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.stage == Stage.FEEDBACK,
+                    Event.status == EventStatus.SUCCESS,
+                    Event.created_at >= start,
+                )
+            )
+        ).scalar_one()
+
         failure_rows = await session.execute(
             select(Event.status, func.count())
             .where(
@@ -281,5 +294,6 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             blocked_by_limit_today=blocked_by_limit_today,
             blocked_video_today=blocked_video_today,
             cancelled_today=cancelled_today,
+            feedback_today=feedback_today,
             failures_today_by_status=failures_today_by_status,
         )

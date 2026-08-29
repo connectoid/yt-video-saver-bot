@@ -3,7 +3,7 @@ from bot.commands import PUBLIC_COMMANDS
 
 def test_public_commands_include_expected_set():
     names = {c.command for c in PUBLIC_COMMANDS}
-    assert names == {"start", "help", "limits", "history", "cancel", "terms"}
+    assert names == {"start", "help", "limits", "history", "cancel", "terms", "feedback"}
 
 
 def test_public_commands_exclude_admin_only_commands():
