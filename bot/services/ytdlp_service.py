@@ -37,6 +37,7 @@ class VideoInfo:
     thumbnail_url: str | None
     available_heights: list[int]
     formats: dict[int, str]  # height -> yt-dlp format selector
+    sizes: dict[int, int | None]  # height -> примерный размер файла в байтах (None, если yt-dlp его не знает)
 
 
 def _base_ydl_opts() -> dict:
@@ -62,6 +63,68 @@ def _build_format_selector(height: int) -> str:
         f"/bestvideo[height={height}]+bestaudio"
         f"/best[height={height}]"
     )
+
+
+def _format_size_bytes(fmt: dict) -> int | None:
+    """У yt-dlp размер формата бывает либо точным (filesize), либо оценённым
+    им самим по битрейту и длительности (filesize_approx) — берём то, что
+    есть, само название поля уже говорит вызывающему коду, что это оценка."""
+    return fmt.get("filesize") or fmt.get("filesize_approx")
+
+
+def _best_audio_size_bytes(formats: list[dict]) -> int | None:
+    """Размер аудиодорожки, которая будет примешана к видео-потоку — не
+    зависит от выбранного разрешения, поэтому считается один раз и
+    прибавляется к размеру видео при отдельных (не progressive) форматах.
+    Приоритет тот же, что и в _build_format_selector: сначала m4a."""
+    audio_formats = [
+        f
+        for f in formats
+        if f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")
+    ]
+    candidates = [f for f in audio_formats if _format_size_bytes(f)]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda f: (f.get("ext") == "m4a", f.get("abr") or 0))
+    return _format_size_bytes(best)
+
+
+def _estimate_size_bytes(formats: list[dict], height: int) -> int | None:
+    """Примерный итоговый размер файла для конкретного разрешения.
+
+    Для большинства видео выше 360p YouTube отдаёt видео и аудио отдельными
+    (video-only) потоками, которые склеиваются ffmpeg-ом при скачивании —
+    тогда оценка это видео-поток нужной высоты + отдельно взятое лучшее
+    аудио. Если видео-only потока такой высоты нет (только progressive,
+    уже со звуком) — берём размер progressive-формата как есть, аудио
+    добавлять не нужно, оно уже внутри.
+    """
+    at_height = [
+        f
+        for f in formats
+        if f.get("height") == height and f.get("vcodec") not in (None, "none")
+    ]
+    video_only = [f for f in at_height if f.get("acodec") in (None, "none")]
+    progressive = [f for f in at_height if f.get("acodec") not in (None, "none")]
+
+    video_candidates = [f for f in video_only if _format_size_bytes(f)]
+    if video_candidates:
+        best_video = max(
+            video_candidates, key=lambda f: (f.get("ext") == "mp4", _format_size_bytes(f))
+        )
+        video_size = _format_size_bytes(best_video)
+        audio_size = _best_audio_size_bytes(formats)
+        return video_size + audio_size if audio_size else video_size
+
+    progressive_candidates = [f for f in progressive if _format_size_bytes(f)]
+    if progressive_candidates:
+        best_progressive = max(
+            progressive_candidates,
+            key=lambda f: (f.get("ext") == "mp4", _format_size_bytes(f)),
+        )
+        return _format_size_bytes(best_progressive)
+
+    return None
 
 
 def _select_offered_heights(available_heights: list[int]) -> list[int]:
@@ -127,6 +190,7 @@ async def fetch_video_info(url: str) -> VideoInfo:
         offered = heights[:1]
 
     format_map = {h: _build_format_selector(h) for h in offered}
+    size_map = {h: _estimate_size_bytes(formats, h) for h in offered}
 
     return VideoInfo(
         id=info.get("id", ""),
@@ -137,6 +201,7 @@ async def fetch_video_info(url: str) -> VideoInfo:
         thumbnail_url=info.get("thumbnail"),
         available_heights=offered,
         formats=format_map,
+        sizes=size_map,
     )
 
 

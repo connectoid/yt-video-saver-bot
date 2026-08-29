@@ -14,6 +14,23 @@ def format_duration(seconds: int | float | None) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+def format_size(num_bytes: int | float | None, *, approx: bool = True) -> str:
+    """Человекочитаемый размер файла. approx=True добавляет "≈" — все размеры
+    на кнопках разрешений оценочные (см. ytdlp_service._estimate_size_bytes),
+    а не точные, так что стоит явно на это намекать."""
+    if not num_bytes or num_bytes <= 0:
+        return ""
+    size = float(num_bytes)
+    prefix = "≈" if approx else ""
+    for unit in ("Б", "КБ", "МБ", "ГБ"):
+        if size < 1024 or unit == "ГБ":
+            if unit == "Б":
+                return f"{prefix}{int(size)} {unit}"
+            return f"{prefix}{size:.1f} {unit}"
+        size /= 1024
+    return f"{prefix}{size:.1f} ГБ"
+
+
 def format_count(value: int | None) -> str:
     if value is None:
         return "—"

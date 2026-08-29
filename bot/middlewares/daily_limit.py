@@ -43,6 +43,11 @@ class DailyLimitMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         user_id = event.from_user.id
+        if config.is_admin(user_id):
+            # Админы (ADMIN_USER_IDS) не ограничены дневным лимитом — им
+            # нужно свободно тестировать бота без ожидания сброса в полночь.
+            return await handler(event, data)
+
         used = await crud.count_successful_downloads_today(db, user_id)
         if used < config.daily_download_limit:
             return await handler(event, data)

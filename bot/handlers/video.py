@@ -97,7 +97,7 @@ async def handle_link(message: Message, video_url: str, db: Database | None = No
     request_id = request_cache.put(
         PendingDownload(url=video_url, video_id=info.id, title=info.title, formats=info.formats)
     )
-    keyboard = build_resolution_keyboard(request_id, info.available_heights)
+    keyboard = build_resolution_keyboard(request_id, info.available_heights, info.sizes)
     caption = build_caption(info.title, info.uploader, info.duration, info.view_count)
 
     await status.delete()
