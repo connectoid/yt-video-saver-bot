@@ -1,0 +1,15 @@
+[Unit]
+Description=YouTube Video Saver Bot
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/environment
+ExecStart=/root/dev/bots/yt-video-saver-bot/venv/bin/python -m bot
+ExecReload=/root/dev/bots/yt-video-saver-bot/venv/bin/python -m bot
+WorkingDirectory=/root/dev/bots/yt-video-saver-bot/
+KillMode=process
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

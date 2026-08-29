@@ -10,8 +10,12 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from bot.config import Config
+from bot.db import crud
+from bot.db.engine import Database
+from bot.db.models import EventStatus, Stage
 from bot.filters.youtube_link import YouTubeLinkFilter
 from bot.keyboards.resolution import build_resolution_keyboard
+from bot.middlewares.daily_limit import DailyLimitMiddleware
 from bot.services import ytdlp_service
 from bot.services.request_cache import PendingDownload, RequestCache
 from bot.utils.formatting import build_caption
@@ -19,23 +23,44 @@ from bot.utils.formatting import build_caption
 logger = logging.getLogger(__name__)
 
 router = Router(name="video")
+router.callback_query.middleware(DailyLimitMiddleware())
 
 # MVP: одно хранилище на процесс. При масштабировании на несколько
 # инстансов бота его нужно будет вынести в Redis/БД (см. README, roadmap).
 request_cache = RequestCache()
 
 
+async def _log_event_safe(db: Database | None, **kwargs) -> None:
+    """Обёртка над crud.log_event: аналитика не должна ронять обработчик,
+    если БД временно недоступна."""
+    if db is None:
+        return
+    try:
+        await crud.log_event(db, **kwargs)
+    except Exception:
+        logger.exception("Failed to log event: %s", kwargs)
+
+
 @router.message(YouTubeLinkFilter())
-async def handle_link(message: Message, video_url: str) -> None:
+async def handle_link(message: Message, video_url: str, db: Database | None = None) -> None:
+    user_id = message.from_user.id if message.from_user else None
     status = await message.answer("🔎 Получаю информацию о видео...")
 
     try:
         info = await ytdlp_service.fetch_video_info(video_url)
     except ytdlp_service.LiveStreamNotSupportedError:
         await status.edit_text("⚠️ Прямые эфиры пока не поддерживаются.")
+        if user_id is not None:
+            await _log_event_safe(
+                db, user_id=user_id, stage=Stage.INFO_FETCH, status=EventStatus.FAILED_LIVE
+            )
         return
     except ytdlp_service.NoFormatsAvailableError:
         await status.edit_text("⚠️ Не удалось найти доступные форматы для этого видео.")
+        if user_id is not None:
+            await _log_event_safe(
+                db, user_id=user_id, stage=Stage.INFO_FETCH, status=EventStatus.FAILED_NO_FORMATS
+            )
         return
     except ytdlp_service.VideoUnavailableError as exc:
         logger.info("Video unavailable for %s: %s", video_url, exc)
@@ -43,14 +68,34 @@ async def handle_link(message: Message, video_url: str) -> None:
             "⚠️ Не получилось получить это видео. Возможно, оно приватное, "
             "удалено или недоступно в регионе, где работает бот."
         )
+        if user_id is not None:
+            await _log_event_safe(
+                db,
+                user_id=user_id,
+                stage=Stage.INFO_FETCH,
+                status=EventStatus.FAILED_UNAVAILABLE,
+            )
         return
     except Exception:
         logger.exception("Failed to fetch video info for %s", video_url)
         await status.edit_text("⚠️ Что-то пошло не так при получении видео. Попробуйте позже.")
+        if user_id is not None:
+            await _log_event_safe(
+                db, user_id=user_id, stage=Stage.INFO_FETCH, status=EventStatus.FAILED_ERROR
+            )
         return
 
+    if user_id is not None:
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.INFO_FETCH,
+            status=EventStatus.SUCCESS,
+            video_id=info.id,
+        )
+
     request_id = request_cache.put(
-        PendingDownload(url=video_url, title=info.title, formats=info.formats)
+        PendingDownload(url=video_url, video_id=info.id, title=info.title, formats=info.formats)
     )
     keyboard = build_resolution_keyboard(request_id, info.available_heights)
     caption = build_caption(info.title, info.uploader, info.duration, info.view_count)
@@ -70,10 +115,12 @@ async def handle_resolution_choice(
     callback: CallbackQuery,
     semaphore: asyncio.Semaphore,
     config: Config,
+    db: Database | None = None,
 ) -> None:
     assert callback.data is not None
     _, request_id, height_str = callback.data.split(":")
     height = int(height_str)
+    user_id = callback.from_user.id
 
     pending = request_cache.get(request_id)
     if pending is None:
@@ -104,16 +151,50 @@ async def handle_resolution_choice(
                 f"лимита Telegram для ботов ({config.max_file_size_mb} МБ). "
                 "Обход лимита в разработке — попробуйте разрешение поменьше."
             )
+            await _log_event_safe(
+                db,
+                user_id=user_id,
+                stage=Stage.DOWNLOAD,
+                status=EventStatus.FAILED_SIZE_LIMIT,
+                video_id=pending.video_id,
+                height=height,
+                file_size_bytes=size_bytes,
+            )
             return
 
         await message.answer_video(FSInputFile(filepath), caption=pending.title)
         await status.delete()
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.SUCCESS,
+            video_id=pending.video_id,
+            height=height,
+            file_size_bytes=size_bytes,
+        )
     except ytdlp_service.VideoUnavailableError:
         logger.info("Video became unavailable during download: %s", pending.url)
         await status.edit_text("⚠️ Видео стало недоступно во время скачивания.")
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.FAILED_UNAVAILABLE,
+            video_id=pending.video_id,
+            height=height,
+        )
     except Exception:
         logger.exception("Failed to download %s at %sp", pending.url, height)
         await status.edit_text("⚠️ Не удалось скачать видео. Попробуйте ещё раз позже.")
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.FAILED_ERROR,
+            video_id=pending.video_id,
+            height=height,
+        )
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 

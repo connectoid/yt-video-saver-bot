@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 @dataclass
 class PendingDownload:
     url: str
+    video_id: str
     title: str
     formats: dict[int, str]  # height -> yt-dlp format selector
     created_at: float = field(default_factory=time.monotonic)

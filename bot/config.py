@@ -1,12 +1,25 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _parse_admin_ids(raw: str) -> frozenset[int]:
+    ids: set[int] = set()
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            ids.add(int(chunk))
+        except ValueError:
+            continue
+    return frozenset(ids)
 
 
 @dataclass(frozen=True)
@@ -16,10 +29,17 @@ class Config:
     downloads_dir: Path
     log_level: str
     max_file_size_mb: int
+    database_url: str
+    daily_download_limit: int
+    admin_user_ids: frozenset[int] = field(default_factory=frozenset)
+    telegram_api_base_url: str | None = None
 
     @property
     def max_file_size_bytes(self) -> int:
         return self.max_file_size_mb * 1024 * 1024
+
+    def is_admin(self, user_id: int) -> bool:
+        return user_id in self.admin_user_ids
 
 
 def load_config(env_file: str | Path | None = None) -> Config:
@@ -39,10 +59,19 @@ def load_config(env_file: str | Path | None = None) -> Config:
     downloads_dir = BASE_DIR / os.getenv("DOWNLOADS_DIR", "downloads")
     downloads_dir.mkdir(parents=True, exist_ok=True)
 
+    default_db_path = BASE_DIR / "bot.db"
+    database_url = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{default_db_path}")
+
+    telegram_api_base_url = os.getenv("TELEGRAM_API_BASE_URL", "").strip() or None
+
     return Config(
         bot_token=bot_token,
         max_concurrent_downloads=int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3")),
         downloads_dir=downloads_dir,
         log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         max_file_size_mb=int(os.getenv("MAX_FILE_SIZE_MB", "50")),
+        database_url=database_url,
+        daily_download_limit=int(os.getenv("DAILY_DOWNLOAD_LIMIT", "5")),
+        admin_user_ids=_parse_admin_ids(os.getenv("ADMIN_USER_IDS", "")),
+        telegram_api_base_url=telegram_api_base_url,
     )

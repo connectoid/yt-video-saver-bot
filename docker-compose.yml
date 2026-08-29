@@ -1,0 +1,30 @@
+# Локальный Bot API сервер (telegram-bot-api) — снимает ограничение
+# Telegram Bot API на отправку файлов с 50 МБ до 2000 МБ.
+#
+# Использование:
+#   1. Получить api_id/api_hash на https://my.telegram.org/apps
+#   2. Вписать их в .env как TELEGRAM_API_ID / TELEGRAM_API_HASH
+#   3. docker compose up -d
+#   4. В .env выставить TELEGRAM_API_BASE_URL=http://localhost:8081
+#      и поднять MAX_FILE_SIZE_MB (например, до 2000)
+#   5. Перезапустить бота — bot/main.py сам подхватит новый base_url
+#
+# Файлы отдаются через обычную загрузку на локальный сервер (без флага
+# --local и без общего volume с ботом) — это самый простой вариант,
+# который уже снимает лимит в 50 МБ. Режим --local с прямым чтением
+# файлов с диска (быстрее, но требует общего volume между ботом и
+# сервером и работы с путями) — возможная оптимизация на будущее.
+services:
+  telegram-bot-api:
+    image: aiogram/telegram-bot-api:latest
+    restart: unless-stopped
+    environment:
+      TELEGRAM_API_ID: ${TELEGRAM_API_ID}
+      TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - bot_api_data:/var/lib/telegram-bot-api
+
+volumes:
+  bot_api_data:
