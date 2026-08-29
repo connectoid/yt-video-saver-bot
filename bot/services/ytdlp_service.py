@@ -4,6 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
@@ -205,7 +206,48 @@ async def fetch_video_info(url: str) -> VideoInfo:
     )
 
 
-def _download_sync(url: str, format_selector: str, work_dir: Path) -> Path:
+def _stream_label(info: dict) -> str:
+    vcodec = info.get("vcodec")
+    acodec = info.get("acodec")
+    has_video = vcodec not in (None, "none")
+    has_audio = acodec not in (None, "none")
+    if has_video and not has_audio:
+        return "видео"
+    if has_audio and not has_video:
+        return "аудио"
+    return "видео"
+
+
+def _make_progress_hook(on_progress: Callable[[float | None, str], None]):
+    def hook(d: dict) -> None:
+        status = d.get("status")
+        if status == "downloading":
+            downloaded = d.get("downloaded_bytes") or 0
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            fraction = downloaded / total if total else None
+            label = _stream_label(d.get("info_dict") or {})
+            on_progress(fraction, label)
+        elif status == "finished":
+            label = _stream_label(d.get("info_dict") or {})
+            on_progress(1.0, label)
+
+    return hook
+
+
+def _make_postprocessor_hook(on_progress: Callable[[float | None, str], None]):
+    def hook(d: dict) -> None:
+        if d.get("status") == "started":
+            on_progress(None, "обработка")
+
+    return hook
+
+
+def _download_sync(
+    url: str,
+    format_selector: str,
+    work_dir: Path,
+    on_progress: Callable[[float | None, str], None] | None = None,
+) -> Path:
     outtmpl = str(work_dir / "%(title).200B [%(id)s].%(ext)s")
     ydl_opts = {
         **_base_ydl_opts(),
@@ -213,6 +255,9 @@ def _download_sync(url: str, format_selector: str, work_dir: Path) -> Path:
         "outtmpl": outtmpl,
         "merge_output_format": "mp4",
     }
+    if on_progress is not None:
+        ydl_opts["progress_hooks"] = [_make_progress_hook(on_progress)]
+        ydl_opts["postprocessor_hooks"] = [_make_postprocessor_hook(on_progress)]
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         downloads = info.get("requested_downloads") or []
@@ -221,8 +266,18 @@ def _download_sync(url: str, format_selector: str, work_dir: Path) -> Path:
         return Path(ydl.prepare_filename(info))
 
 
-async def download_video(url: str, format_selector: str, work_dir: Path) -> Path:
+async def download_video(
+    url: str,
+    format_selector: str,
+    work_dir: Path,
+    on_progress: Callable[[float | None, str], None] | None = None,
+) -> Path:
+    """on_progress(fraction, label) вызывается синхронно из потока скачивания
+    (см. asyncio.to_thread ниже) — не aiogram/asyncio-safe напрямую, вызывающий
+    код (см. ProgressReporter) сам отвечает за безопасный мост в event loop."""
     try:
-        return await asyncio.to_thread(_download_sync, url, format_selector, work_dir)
+        return await asyncio.to_thread(
+            _download_sync, url, format_selector, work_dir, on_progress
+        )
     except DownloadError as exc:
         raise VideoUnavailableError(str(exc)) from exc

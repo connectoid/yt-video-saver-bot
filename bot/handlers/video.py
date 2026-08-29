@@ -17,6 +17,8 @@ from bot.filters.youtube_link import YouTubeLinkFilter
 from bot.keyboards.resolution import build_resolution_keyboard
 from bot.middlewares.daily_limit import DailyLimitMiddleware
 from bot.services import ytdlp_service
+from bot.services.download_queue import DownloadQueue, queue_ahead_count
+from bot.services.progress_reporter import ProgressReporter
 from bot.services.request_cache import PendingDownload, RequestCache
 from bot.utils.formatting import build_caption
 
@@ -28,6 +30,7 @@ router.callback_query.middleware(DailyLimitMiddleware())
 # MVP: одно хранилище на процесс. При масштабировании на несколько
 # инстансов бота его нужно будет вынести в Redis/БД (см. README, roadmap).
 request_cache = RequestCache()
+download_queue = DownloadQueue()
 
 
 async def _log_event_safe(db: Database | None, **kwargs) -> None:
@@ -137,12 +140,25 @@ async def handle_resolution_choice(
     if message is None:
         return
 
-    status = await message.answer(f"⏳ Скачиваю {height}p...")
+    queue_token = await download_queue.enter()
+    position = await download_queue.position(queue_token)
+    ahead = queue_ahead_count(position, config.max_concurrent_downloads)
+    if ahead > 0:
+        status = await message.answer(
+            f"🕐 В очереди на скачивание — перед вами: {ahead}. "
+            "Начнём, как только освободится слот."
+        )
+    else:
+        status = await message.answer(f"⏳ Скачиваю {height}p...")
 
     work_dir = Path(tempfile.mkdtemp(prefix="dl_", dir=config.downloads_dir))
     try:
+        loop = asyncio.get_running_loop()
+        progress = ProgressReporter(loop, status, height)
         async with semaphore:
-            filepath = await ytdlp_service.download_video(pending.url, format_selector, work_dir)
+            filepath = await ytdlp_service.download_video(
+                pending.url, format_selector, work_dir, on_progress=progress
+            )
 
         size_bytes = filepath.stat().st_size
         if size_bytes > config.max_file_size_bytes:
@@ -196,6 +212,7 @@ async def handle_resolution_choice(
             height=height,
         )
     finally:
+        await download_queue.leave(queue_token)
         shutil.rmtree(work_dir, ignore_errors=True)
 
 

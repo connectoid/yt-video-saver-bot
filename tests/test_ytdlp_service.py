@@ -118,3 +118,94 @@ def test_best_audio_size_prefers_m4a():
 def test_best_audio_size_none_without_audio_formats():
     formats = [_video_only(720, "mp4", size=40_000_000)]
     assert _best_audio_size_bytes(formats) is None
+
+
+from bot.services.ytdlp_service import _make_postprocessor_hook, _make_progress_hook, _stream_label
+
+
+def test_stream_label_video_only():
+    assert _stream_label({"vcodec": "avc1", "acodec": "none"}) == "видео"
+
+
+def test_stream_label_audio_only():
+    assert _stream_label({"vcodec": "none", "acodec": "m4a"}) == "аудио"
+
+
+def test_stream_label_progressive_counts_as_video():
+    assert _stream_label({"vcodec": "avc1", "acodec": "m4a"}) == "видео"
+
+
+def test_progress_hook_reports_fraction_from_downloaded_and_total():
+    calls = []
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+
+    hook({
+        "status": "downloading",
+        "downloaded_bytes": 50,
+        "total_bytes": 200,
+        "info_dict": {"vcodec": "avc1", "acodec": "none"},
+    })
+
+    assert calls == [(0.25, "видео")]
+
+
+def test_progress_hook_falls_back_to_estimate_when_total_missing():
+    calls = []
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+
+    hook({
+        "status": "downloading",
+        "downloaded_bytes": 10,
+        "total_bytes_estimate": 40,
+        "info_dict": {"vcodec": "none", "acodec": "m4a"},
+    })
+
+    assert calls == [(0.25, "аудио")]
+
+
+def test_progress_hook_reports_none_when_total_unknown():
+    calls = []
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+
+    hook({
+        "status": "downloading",
+        "downloaded_bytes": 10,
+        "info_dict": {"vcodec": "avc1", "acodec": "none"},
+    })
+
+    assert calls == [(None, "видео")]
+
+
+def test_progress_hook_ignores_non_downloading_status_except_finished():
+    calls = []
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+
+    hook({"status": "error", "info_dict": {}})
+    assert calls == []
+
+
+def test_progress_hook_reports_full_on_finished():
+    calls = []
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+
+    hook({"status": "finished", "info_dict": {"vcodec": "avc1", "acodec": "none"}})
+
+    assert calls == [(1.0, "видео")]
+
+
+def test_postprocessor_hook_reports_processing_stage_on_start():
+    calls = []
+    hook = _make_postprocessor_hook(lambda fraction, label: calls.append((fraction, label)))
+
+    hook({"status": "started"})
+
+    assert calls == [(None, "обработка")]
+
+
+def test_postprocessor_hook_ignores_finished():
+    calls = []
+    hook = _make_postprocessor_hook(lambda fraction, label: calls.append((fraction, label)))
+
+    hook({"status": "finished"})
+
+    assert calls == []

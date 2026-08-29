@@ -61,3 +61,28 @@ def build_caption(
 
     lines.append("\nВыберите разрешение для скачивания:")
     return "\n".join(lines)
+
+
+def render_progress_bar(fraction: float, width: int = 12) -> str:
+    """Текстовый прогресс-бар из блочных символов, например
+    '████████░░░░' для fraction=0.66."""
+    fraction = max(0.0, min(1.0, fraction))
+    filled = round(fraction * width)
+    return "█" * filled + "░" * (width - filled)
+
+
+def format_download_progress(height: int, fraction: float | None, label: str) -> str:
+    """Текст статусного сообщения во время скачивания.
+
+    label — что сейчас происходит: "видео"/"аудио" (какая дорожка качается)
+    или "обработка" (склейка видео+аудио через ffmpeg, для неё yt-dlp не
+    сообщает процент). fraction=None — доля неизвестна (например, yt-dlp не
+    знает общий размер потока или ещё не показывает процент).
+    """
+    if label == "обработка":
+        return f"🔧 Собираю файл {height}p, ещё немного..."
+    if fraction is None:
+        return f"⏳ Скачиваю {height}p ({label})..."
+    percent = round(fraction * 100)
+    bar = render_progress_bar(fraction)
+    return f"⏳ Скачиваю {height}p ({label})\n{bar} {percent}%"
