@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 
 from bot.db.engine import Database
-from bot.db.models import Event, EventStatus, Stage, User
+from bot.db.models import BlockedVideo, Event, EventStatus, Stage, User
 
 
 def today_utc_start(now: dt.datetime | None = None) -> dt.datetime:
@@ -126,6 +126,48 @@ async def get_recent_downloads(
         ]
 
 
+async def is_video_blocked(db: Database, video_id: str) -> bool:
+    """Проверка блок-листа — вызывается ДО похода в yt-dlp (см.
+    bot/handlers/video.py::handle_link), поэтому должна быть дешёвой:
+    один select по первичному ключу."""
+    async with db.session() as session:
+        return await session.get(BlockedVideo, video_id) is not None
+
+
+async def block_video(db: Database, video_id: str, reason: str | None = None) -> None:
+    """Добавить video_id в блок-лист (или обновить причину, если он там
+    уже есть) — используется командой /block."""
+    async with db.session() as session:
+        existing = await session.get(BlockedVideo, video_id)
+        if existing is not None:
+            existing.reason = reason
+        else:
+            session.add(BlockedVideo(video_id=video_id, reason=reason))
+        await session.commit()
+
+
+async def unblock_video(db: Database, video_id: str) -> bool:
+    """Убрать video_id из блок-листа — используется командой /unblock.
+    Возвращает True, если запись действительно была и её удалили."""
+    async with db.session() as session:
+        existing = await session.get(BlockedVideo, video_id)
+        if existing is None:
+            return False
+        await session.delete(existing)
+        await session.commit()
+        return True
+
+
+async def list_blocked_videos(db: Database) -> list[BlockedVideo]:
+    """Все заблокированные video_id, новые сначала — для команды
+    /blocklist."""
+    async with db.session() as session:
+        result = await session.execute(
+            select(BlockedVideo).order_by(BlockedVideo.blocked_at.desc())
+        )
+        return list(result.scalars().all())
+
+
 @dataclass
 class Stats:
     total_users: int
@@ -134,6 +176,7 @@ class Stats:
     downloads_success_today: int
     downloads_success_total: int
     blocked_by_limit_today: int
+    blocked_video_today: int
     cancelled_today: int
     failures_today_by_status: dict[str, int]
 
@@ -201,11 +244,27 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             )
         ).scalar_one()
 
+        blocked_video_today = (
+            await session.execute(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.status == EventStatus.BLOCKED_VIDEO,
+                    Event.created_at >= start,
+                )
+            )
+        ).scalar_one()
+
         failure_rows = await session.execute(
             select(Event.status, func.count())
             .where(
                 Event.status.notin_(
-                    [EventStatus.SUCCESS, EventStatus.BLOCKED_DAILY_LIMIT, EventStatus.CANCELLED]
+                    [
+                        EventStatus.SUCCESS,
+                        EventStatus.BLOCKED_DAILY_LIMIT,
+                        EventStatus.BLOCKED_VIDEO,
+                        EventStatus.CANCELLED,
+                    ]
                 ),
                 Event.created_at >= start,
             )
@@ -220,6 +279,7 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             downloads_success_today=downloads_success_today,
             downloads_success_total=downloads_success_total,
             blocked_by_limit_today=blocked_by_limit_today,
+            blocked_video_today=blocked_video_today,
             cancelled_today=cancelled_today,
             failures_today_by_status=failures_today_by_status,
         )

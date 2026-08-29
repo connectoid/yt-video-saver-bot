@@ -114,3 +114,22 @@ def test_format_history_entry_missing_video_id_no_link():
     )
     assert "<a href" not in text
     assert "Cool" in text
+
+
+from bot.utils.formatting import build_terms_text
+
+
+def test_build_terms_text_with_support_contact():
+    text = build_terms_text("@support_user")
+    assert "@support_user" in text
+    assert "/terms" in text
+
+
+def test_build_terms_text_without_support_contact_uses_generic_line():
+    text = build_terms_text(None)
+    assert "администратору" in text
+
+
+def test_build_terms_text_mentions_blocking_by_rightsholder_request():
+    text = build_terms_text(None)
+    assert "правообладателя" in text

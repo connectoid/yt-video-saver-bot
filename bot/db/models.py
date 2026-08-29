@@ -32,6 +32,7 @@ class EventStatus:
     FAILED_SIZE_LIMIT = "failed_size_limit"
     FAILED_ERROR = "failed_error"
     BLOCKED_DAILY_LIMIT = "blocked_daily_limit"
+    BLOCKED_VIDEO = "blocked_video"
     CANCELLED = "cancelled"
 
 
@@ -89,3 +90,19 @@ class Event(Base):
     file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="events")
+
+
+class BlockedVideo(Base):
+    """Video_id, скачивание которых запрещено — по запросу правообладателя
+    или другой причине. Проверяется в bot/handlers/video.py::handle_link
+    ДО похода в yt-dlp за метаданными, чтобы не тратить время/ресурсы на
+    заведомо отклонённое видео. Администрируется командами /block и
+    /unblock (см. bot/handlers/admin.py) — изменения применяются сразу,
+    без перезапуска бота, что важно при реальной жалобе.
+    """
+
+    __tablename__ = "blocked_videos"
+
+    video_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    blocked_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -4,12 +4,16 @@ from aiogram import Router
 from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
+from bot.config import Config
+from bot.utils.formatting import build_terms_text
+
 router = Router(name="common")
 
 WELCOME_TEXT = (
     "👋 Привет! Я скачиваю видео и Shorts с YouTube.\n\n"
     "Просто пришли мне ссылку на видео — я покажу превью и предложу "
-    "доступные разрешения для скачивания."
+    "доступные разрешения для скачивания.\n\n"
+    "Скачивая видео, вы соглашаетесь с условиями использования — /terms."
 )
 
 HELP_TEXT = (
@@ -20,7 +24,8 @@ HELP_TEXT = (
     "Команды:\n"
     "/limits — сколько скачиваний осталось сегодня\n"
     "/history — последние скачанные видео\n"
-    "/cancel — отменить текущее скачивание\n\n"
+    "/cancel — отменить текущее скачивание\n"
+    "/terms — условия использования\n\n"
     "⚠️ Пока действует ограничение Telegram: боты не могут отправлять "
     "файлы крупнее 50 МБ. Обход этого лимита в разработке."
 )
@@ -34,3 +39,8 @@ async def cmd_start(message: Message) -> None:
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
     await message.answer(HELP_TEXT)
+
+
+@router.message(Command("terms"))
+async def cmd_terms(message: Message, config: Config) -> None:
+    await message.answer(build_terms_text(config.support_contact))

@@ -55,9 +55,43 @@ async def _log_event_safe(db: Database | None, **kwargs) -> None:
         logger.exception("Failed to log event: %s", kwargs)
 
 
+async def _is_blocked_safe(db: Database | None, video_id: str) -> bool:
+    """Обёртка над crud.is_video_blocked. Если БД недоступна — считаем
+    видео НЕ заблокированным (fail-open), тем же способом, каким
+    DailyLimitMiddleware обрабатывает недоступность БД для дневного
+    лимита: блок-лист — это защита от юридических рисков, а не от
+    злоупотреблений, отказ ради него в обслуживании при сбое БД того не
+    стоит."""
+    if db is None:
+        return False
+    try:
+        return await crud.is_video_blocked(db, video_id)
+    except Exception:
+        logger.exception("Failed to check blocklist for video_id=%s", video_id)
+        return False
+
+
 @router.message(YouTubeLinkFilter())
-async def handle_link(message: Message, video_url: str, db: Database | None = None) -> None:
+async def handle_link(
+    message: Message, video_url: str, video_id: str, db: Database | None = None
+) -> None:
     user_id = message.from_user.id if message.from_user else None
+
+    if await _is_blocked_safe(db, video_id):
+        await message.answer(
+            "🚫 Это видео недоступно для скачивания — доступ закрыт по "
+            "запросу правообладателя."
+        )
+        if user_id is not None:
+            await _log_event_safe(
+                db,
+                user_id=user_id,
+                stage=Stage.INFO_FETCH,
+                status=EventStatus.BLOCKED_VIDEO,
+                video_id=video_id,
+            )
+        return
+
     status = await message.answer("🔎 Получаю информацию о видео...")
 
     try:
@@ -139,6 +173,26 @@ async def handle_resolution_choice(
     pending = request_cache.get(request_id)
     if pending is None:
         await callback.answer("Ссылка устарела, отправьте видео ещё раз.", show_alert=True)
+        return
+
+    if pending.video_id and await _is_blocked_safe(db, pending.video_id):
+        # Редкий, но реальный случай: кнопки разрешений уже были показаны,
+        # когда админ заблокировал видео (см. /block в bot/handlers/admin.py)
+        # — проверяем ещё раз здесь, чтобы блокировка применялась сразу же,
+        # а не только к новым запросам /handle_link.
+        await callback.answer(
+            "Это видео недоступно для скачивания — доступ закрыт по запросу "
+            "правообладателя.",
+            show_alert=True,
+        )
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.BLOCKED_VIDEO,
+            video_id=pending.video_id,
+            height=height,
+        )
         return
 
     format_selector = pending.formats.get(height)

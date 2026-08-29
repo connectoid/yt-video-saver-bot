@@ -18,14 +18,32 @@ YOUTUBE_URL_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# Форма самого video_id (без ссылки вокруг) — используется при ручном вводе
+# id в админ-командах /block и /unblock (см. bot/handlers/admin.py), чтобы
+# отсечь опечатки до похода в БД.
+VIDEO_ID_RE = re.compile(r"^[\w-]{11}$")
+
+
+def extract_video_id(text: str) -> str | None:
+    """Найти id первой ссылки на YouTube-видео/Shorts в произвольном тексте.
+
+    Вынесено отдельно от extract_video_url, потому что id нужен и до
+    похода в yt-dlp — например, чтобы проверить видео по блок-листу
+    (см. bot/db/crud.py::is_video_blocked), не тратя время на сетевой
+    запрос ради видео, которое всё равно будет отклонено.
+    """
+    match = YOUTUBE_URL_RE.search(text)
+    if not match:
+        return None
+    return next(g for g in match.groups() if g)
+
 
 def extract_video_url(text: str) -> str | None:
     """Найти первую ссылку на YouTube-видео/Shorts в произвольном тексте.
 
     Возвращает канонический watch-URL или None, если ссылка не найдена.
     """
-    match = YOUTUBE_URL_RE.search(text)
-    if not match:
+    video_id = extract_video_id(text)
+    if video_id is None:
         return None
-    video_id = next(g for g in match.groups() if g)
     return f"https://www.youtube.com/watch?v={video_id}"

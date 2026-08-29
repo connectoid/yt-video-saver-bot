@@ -50,6 +50,10 @@ class Config:
     daily_download_limit: int
     admin_user_ids: frozenset[int] = field(default_factory=frozenset)
     telegram_api_base_url: str | None = None
+    # Контакт для жалоб на авторские права/удаление видео — показывается в
+    # /terms. Необязателен: если не задан, бот просто просит написать
+    # администратору, не называя конкретный контакт.
+    support_contact: str | None = None
 
     @property
     def max_file_size_bytes(self) -> int:
@@ -80,6 +84,7 @@ def load_config(env_file: str | Path | None = None) -> Config:
     database_url = _env("DATABASE_URL", f"sqlite+aiosqlite:///{default_db_path}")
 
     telegram_api_base_url = _env("TELEGRAM_API_BASE_URL", "") or None
+    support_contact = _env("SUPPORT_CONTACT", "") or None
 
     return Config(
         bot_token=bot_token,
@@ -91,4 +96,5 @@ def load_config(env_file: str | Path | None = None) -> Config:
         daily_download_limit=int(_env("DAILY_DOWNLOAD_LIMIT", "5")),
         admin_user_ids=_parse_admin_ids(_env("ADMIN_USER_IDS", "")),
         telegram_api_base_url=telegram_api_base_url,
+        support_contact=support_contact,
     )
