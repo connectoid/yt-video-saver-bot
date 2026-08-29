@@ -60,3 +60,57 @@ def test_format_download_progress_unknown_fraction():
 def test_format_download_progress_processing_stage():
     text = format_download_progress(720, None, "обработка")
     assert "Собираю файл 720p" in text
+
+
+import datetime as dt
+
+from bot.utils.formatting import format_history_entry
+
+
+def test_format_history_entry_with_title_and_link():
+    text = format_history_entry(
+        title="Cool Video",
+        video_id="abc123",
+        height=720,
+        file_size_bytes=45_000_000,
+        created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+    )
+    assert '<a href="https://youtu.be/abc123">Cool Video</a>' in text
+    assert "720p" in text
+    assert "42.9 МБ" in text and "≈" not in text  # реальный размер, не оценка
+    assert "29.08 14:03 UTC" in text
+
+
+def test_format_history_entry_escapes_title():
+    text = format_history_entry(
+        title="<script>alert(1)</script>",
+        video_id="abc123",
+        height=720,
+        file_size_bytes=1000,
+        created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+    )
+    assert "<script>" not in text
+    assert "&lt;script&gt;" in text
+
+
+def test_format_history_entry_missing_title_falls_back():
+    text = format_history_entry(
+        title=None,
+        video_id="abc123",
+        height=720,
+        file_size_bytes=1000,
+        created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+    )
+    assert "Видео" in text
+
+
+def test_format_history_entry_missing_video_id_no_link():
+    text = format_history_entry(
+        title="Cool",
+        video_id=None,
+        height=720,
+        file_size_bytes=1000,
+        created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+    )
+    assert "<a href" not in text
+    assert "Cool" in text

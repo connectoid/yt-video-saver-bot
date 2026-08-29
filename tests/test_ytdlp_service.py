@@ -137,7 +137,7 @@ def test_stream_label_progressive_counts_as_video():
 
 def test_progress_hook_reports_fraction_from_downloaded_and_total():
     calls = []
-    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)), None)
 
     hook({
         "status": "downloading",
@@ -151,7 +151,7 @@ def test_progress_hook_reports_fraction_from_downloaded_and_total():
 
 def test_progress_hook_falls_back_to_estimate_when_total_missing():
     calls = []
-    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)), None)
 
     hook({
         "status": "downloading",
@@ -165,7 +165,7 @@ def test_progress_hook_falls_back_to_estimate_when_total_missing():
 
 def test_progress_hook_reports_none_when_total_unknown():
     calls = []
-    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)), None)
 
     hook({
         "status": "downloading",
@@ -178,7 +178,7 @@ def test_progress_hook_reports_none_when_total_unknown():
 
 def test_progress_hook_ignores_non_downloading_status_except_finished():
     calls = []
-    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)), None)
 
     hook({"status": "error", "info_dict": {}})
     assert calls == []
@@ -186,7 +186,7 @@ def test_progress_hook_ignores_non_downloading_status_except_finished():
 
 def test_progress_hook_reports_full_on_finished():
     calls = []
-    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)))
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)), None)
 
     hook({"status": "finished", "info_dict": {"vcodec": "avc1", "acodec": "none"}})
 
@@ -195,7 +195,7 @@ def test_progress_hook_reports_full_on_finished():
 
 def test_postprocessor_hook_reports_processing_stage_on_start():
     calls = []
-    hook = _make_postprocessor_hook(lambda fraction, label: calls.append((fraction, label)))
+    hook = _make_postprocessor_hook(lambda fraction, label: calls.append((fraction, label)), None)
 
     hook({"status": "started"})
 
@@ -204,7 +204,7 @@ def test_postprocessor_hook_reports_processing_stage_on_start():
 
 def test_postprocessor_hook_ignores_finished():
     calls = []
-    hook = _make_postprocessor_hook(lambda fraction, label: calls.append((fraction, label)))
+    hook = _make_postprocessor_hook(lambda fraction, label: calls.append((fraction, label)), None)
 
     hook({"status": "finished"})
 
@@ -265,3 +265,42 @@ def test_best_audio_size_falls_back_to_last_non_m4a_when_no_m4a():
         _audio_only("opus", abr=96, size=2_000_000),
     ]
     assert _best_audio_size_bytes(formats) == 2_000_000
+
+
+import threading
+
+from yt_dlp.utils import DownloadCancelled
+
+
+def test_progress_hook_raises_when_cancel_event_set():
+    cancel_event = threading.Event()
+    cancel_event.set()
+    hook = _make_progress_hook(lambda fraction, label: None, cancel_event)
+
+    try:
+        hook({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 10, "info_dict": {}})
+        assert False, "expected DownloadCancelled"
+    except DownloadCancelled:
+        pass
+
+
+def test_progress_hook_does_not_raise_when_cancel_event_not_set():
+    cancel_event = threading.Event()
+    calls = []
+    hook = _make_progress_hook(lambda fraction, label: calls.append((fraction, label)), cancel_event)
+
+    hook({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 10, "info_dict": {}})
+
+    assert calls == [(0.1, "видео")]
+
+
+def test_postprocessor_hook_raises_when_cancel_event_set():
+    cancel_event = threading.Event()
+    cancel_event.set()
+    hook = _make_postprocessor_hook(lambda fraction, label: None, cancel_event)
+
+    try:
+        hook({"status": "started"})
+        assert False, "expected DownloadCancelled"
+    except DownloadCancelled:
+        pass

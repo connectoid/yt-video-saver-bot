@@ -74,3 +74,82 @@ async def test_get_stats_aggregates_correctly(db):
     assert stats.blocked_by_limit_today == 1
     assert stats.failures_today_by_status[EventStatus.FAILED_SIZE_LIMIT] == 2
     assert stats.failures_today_by_status[EventStatus.FAILED_UNAVAILABLE] == 1
+
+
+async def test_log_event_stores_title(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex")
+    await crud.log_event(
+        db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS,
+        video_id="abc123", title="My Cool Video", height=720, file_size_bytes=1000,
+    )
+
+    async with db.session() as session:
+        from sqlalchemy import select as sa_select
+
+        result = await session.execute(sa_select(Event).where(Event.video_id == "abc123"))
+        event = result.scalar_one()
+        assert event.title == "My Cool Video"
+
+
+async def test_get_recent_downloads_returns_newest_first_and_only_success(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex")
+
+    await crud.log_event(
+        db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS,
+        video_id="first", title="First", height=480, file_size_bytes=1000,
+    )
+    await crud.log_event(
+        db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.FAILED_ERROR,
+        video_id="broken", title="Broken", height=720,
+    )
+    await crud.log_event(
+        db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS,
+        video_id="second", title="Second", height=720, file_size_bytes=2000,
+    )
+
+    entries = await crud.get_recent_downloads(db, 1)
+
+    assert [e.video_id for e in entries] == ["second", "first"]
+    assert entries[0].title == "Second"
+    assert entries[0].height == 720
+    assert entries[0].file_size_bytes == 2000
+
+
+async def test_get_recent_downloads_respects_limit(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex")
+    for i in range(15):
+        await crud.log_event(
+            db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS,
+            video_id=f"v{i}", title=f"Video {i}", height=720, file_size_bytes=1000,
+        )
+
+    entries = await crud.get_recent_downloads(db, 1, limit=5)
+    assert len(entries) == 5
+
+
+async def test_get_recent_downloads_only_for_requested_user(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex")
+    await crud.get_or_create_user(db, 2, "bob", "Bob")
+    await crud.log_event(
+        db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS,
+        video_id="mine", title="Mine", height=720, file_size_bytes=1000,
+    )
+    await crud.log_event(
+        db, user_id=2, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS,
+        video_id="theirs", title="Theirs", height=720, file_size_bytes=1000,
+    )
+
+    entries = await crud.get_recent_downloads(db, 1)
+    assert [e.video_id for e in entries] == ["mine"]
+
+
+async def test_get_stats_counts_cancelled_and_excludes_from_failures(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex")
+    await crud.log_event(db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.CANCELLED, height=720)
+    await crud.log_event(db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.FAILED_ERROR, height=480)
+
+    stats = await crud.get_stats(db)
+
+    assert stats.cancelled_today == 1
+    assert EventStatus.CANCELLED not in stats.failures_today_by_status
+    assert stats.failures_today_by_status[EventStatus.FAILED_ERROR] == 1

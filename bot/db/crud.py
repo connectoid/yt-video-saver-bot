@@ -51,6 +51,7 @@ async def log_event(
     stage: str,
     status: str,
     video_id: str | None = None,
+    title: str | None = None,
     height: int | None = None,
     file_size_bytes: int | None = None,
 ) -> None:
@@ -61,6 +62,7 @@ async def log_event(
                 stage=stage,
                 status=status,
                 video_id=video_id,
+                title=title,
                 height=height,
                 file_size_bytes=file_size_bytes,
             )
@@ -87,6 +89,44 @@ async def count_successful_downloads_today(
 
 
 @dataclass
+class DownloadHistoryEntry:
+    title: str | None
+    video_id: str | None
+    height: int | None
+    file_size_bytes: int | None
+    created_at: dt.datetime
+
+
+async def get_recent_downloads(
+    db: Database, user_id: int, limit: int = 10
+) -> list[DownloadHistoryEntry]:
+    """Последние УСПЕШНЫЕ скачивания пользователя, новые сначала — для
+    команды /history. Неудачные попытки и отменённые скачивания сюда
+    намеренно не попадают, это история того, что реально было скачано."""
+    async with db.session() as session:
+        result = await session.execute(
+            select(Event)
+            .where(
+                Event.user_id == user_id,
+                Event.stage == Stage.DOWNLOAD,
+                Event.status == EventStatus.SUCCESS,
+            )
+            .order_by(Event.created_at.desc())
+            .limit(limit)
+        )
+        return [
+            DownloadHistoryEntry(
+                title=event.title,
+                video_id=event.video_id,
+                height=event.height,
+                file_size_bytes=event.file_size_bytes,
+                created_at=event.created_at,
+            )
+            for event in result.scalars().all()
+        ]
+
+
+@dataclass
 class Stats:
     total_users: int
     new_users_today: int
@@ -94,6 +134,7 @@ class Stats:
     downloads_success_today: int
     downloads_success_total: int
     blocked_by_limit_today: int
+    cancelled_today: int
     failures_today_by_status: dict[str, int]
 
 
@@ -149,10 +190,23 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             )
         ).scalar_one()
 
+        cancelled_today = (
+            await session.execute(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.status == EventStatus.CANCELLED,
+                    Event.created_at >= start,
+                )
+            )
+        ).scalar_one()
+
         failure_rows = await session.execute(
             select(Event.status, func.count())
             .where(
-                Event.status.notin_([EventStatus.SUCCESS, EventStatus.BLOCKED_DAILY_LIMIT]),
+                Event.status.notin_(
+                    [EventStatus.SUCCESS, EventStatus.BLOCKED_DAILY_LIMIT, EventStatus.CANCELLED]
+                ),
                 Event.created_at >= start,
             )
             .group_by(Event.status)
@@ -166,5 +220,6 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             downloads_success_today=downloads_success_today,
             downloads_success_total=downloads_success_total,
             blocked_by_limit_today=blocked_by_limit_today,
+            cancelled_today=cancelled_today,
             failures_today_by_status=failures_today_by_status,
         )

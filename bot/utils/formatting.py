@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from html import escape
 
 
@@ -86,3 +87,32 @@ def format_download_progress(height: int, fraction: float | None, label: str) ->
     percent = round(fraction * 100)
     bar = render_progress_bar(fraction)
     return f"⏳ Скачиваю {height}p ({label})\n{bar} {percent}%"
+
+
+def format_history_entry(
+    *,
+    title: str | None,
+    video_id: str | None,
+    height: int | None,
+    file_size_bytes: int | None,
+    created_at: dt.datetime,
+) -> str:
+    """Одна строка для команды /history.
+
+    file_size_bytes здесь — РЕАЛЬНЫЙ размер скачанного файла (записан в
+    Event после успешной отправки), а не оценка с кнопок разрешений,
+    поэтому format_size зовётся с approx=False — без "≈".
+    """
+    label = escape(title) if title else "Видео"
+    if video_id:
+        label = f'<a href="https://youtu.be/{video_id}">{label}</a>'
+
+    parts = []
+    if height:
+        parts.append(f"{height}p")
+    size_label = format_size(file_size_bytes, approx=False)
+    if size_label:
+        parts.append(size_label)
+    parts.append(created_at.strftime("%d.%m %H:%M UTC"))
+
+    return f"• {label}\n  {' · '.join(parts)}"

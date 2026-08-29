@@ -39,6 +39,7 @@ async def cmd_stats(message: Message, config: Config, db: Database | None = None
         f"Скачано сегодня: {stats.downloads_success_today}",
         f"Скачано всего: {stats.downloads_success_total}",
         f"Заблокировано дневным лимитом сегодня: {stats.blocked_by_limit_today}",
+        f"Отменено пользователями сегодня: {stats.cancelled_today}",
     ]
 
     if stats.failures_today_by_status:

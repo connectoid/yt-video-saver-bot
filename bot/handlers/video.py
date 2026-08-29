@@ -4,9 +4,11 @@ import asyncio
 import logging
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from bot.config import Config
@@ -31,6 +33,15 @@ router.callback_query.middleware(DailyLimitMiddleware())
 # инстансов бота его нужно будет вынести в Redis/БД (см. README, roadmap).
 request_cache = RequestCache()
 download_queue = DownloadQueue()
+
+# Активные (в очереди или уже качающиеся) скачивания по user_id — только для
+# /cancel. Один пользователь = одно активное скачивание (кнопки разрешений
+# после отправки становятся неактуальны для нового запроса, так что этого
+# достаточно). task.cancel() прерывает asyncio-часть (ожидание слота в
+# семафоре, отправку файла), cancel_event заставляет сам поток yt-dlp
+# остановиться пораньше, а не докачивать всё до конца впустую — см.
+# ytdlp_service.download_video.
+active_downloads: dict[int, tuple[asyncio.Task, threading.Event]] = {}
 
 
 async def _log_event_safe(db: Database | None, **kwargs) -> None:
@@ -152,12 +163,15 @@ async def handle_resolution_choice(
         status = await message.answer(f"⏳ Скачиваю {height}p...")
 
     work_dir = Path(tempfile.mkdtemp(prefix="dl_", dir=config.downloads_dir))
+    cancel_event = threading.Event()
+    active_downloads[user_id] = (asyncio.current_task(), cancel_event)
     try:
         loop = asyncio.get_running_loop()
         progress = ProgressReporter(loop, status, height)
         async with semaphore:
             filepath = await ytdlp_service.download_video(
-                pending.url, format_selector, work_dir, on_progress=progress
+                pending.url, format_selector, work_dir,
+                on_progress=progress, cancel_event=cancel_event,
             )
 
         size_bytes = filepath.stat().st_size
@@ -195,9 +209,44 @@ async def handle_resolution_choice(
             stage=Stage.DOWNLOAD,
             status=EventStatus.SUCCESS,
             video_id=pending.video_id,
+            title=pending.title,
             height=height,
             file_size_bytes=size_bytes,
         )
+    except ytdlp_service.DownloadCancelledError:
+        logger.info("Download cancelled by user %s: %s", user_id, pending.url)
+        try:
+            await status.edit_text("❌ Скачивание отменено.")
+        except Exception:
+            pass
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.CANCELLED,
+            video_id=pending.video_id,
+            height=height,
+        )
+    except asyncio.CancelledError:
+        # /cancel вызвал task.cancel() пока мы ещё ждали своей очереди/слота
+        # в семафоре (до потока с yt-dlp дело не дошло — иначе поймали бы
+        # DownloadCancelledError выше). Отдаём CancelledError обратно после
+        # короткой уборки — глотать его молча нельзя, это ломает штатную
+        # семантику отмены asyncio-задач.
+        logger.info("Download task cancelled for user %s before/while downloading", user_id)
+        try:
+            await status.edit_text("❌ Скачивание отменено.")
+        except Exception:
+            pass
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.CANCELLED,
+            video_id=pending.video_id,
+            height=height,
+        )
+        raise
     except ytdlp_service.VideoUnavailableError:
         logger.info("Video became unavailable during download: %s", pending.url)
         await status.edit_text("⚠️ Видео стало недоступно во время скачивания.")
@@ -221,8 +270,37 @@ async def handle_resolution_choice(
             height=height,
         )
     finally:
+        # Не затираем чужую запись: если пользователь успел отменить это
+        # скачивание и сразу запустить новое, к моменту, когда до этого
+        # (уже отменённого) task дойдёт finally, active_downloads[user_id]
+        # может уже указывать на СЛЕДУЮЩЕЕ скачивание — трогаем запись,
+        # только если она всё ещё про нас.
+        current = active_downloads.get(user_id)
+        if current is not None and current[0] is asyncio.current_task():
+            active_downloads.pop(user_id, None)
         await download_queue.leave(queue_token)
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message) -> None:
+    user_id = message.from_user.id if message.from_user else None
+    entry = active_downloads.get(user_id) if user_id is not None else None
+    if entry is None:
+        await message.answer("Сейчас у вас нет активных скачиваний.")
+        return
+
+    task, cancel_event = entry
+    # Оба механизма нужны: cancel_event останавливает сам поток yt-dlp (если
+    # скачивание уже реально идёт — иначе поток докачает всё впустую и
+    # впустую займёт канал/CPU уже после того, как мы всё равно всё бросили),
+    # task.cancel() — прерывает ожидание своей очереди/слота в семафоре или
+    # отправку файла в Telegram, если до потока ещё не дошло или уже после
+    # него. Само подтверждение пользователю уходит из handle_resolution_choice
+    # (там обновляется то же статусное сообщение, что показывало прогресс).
+    cancel_event.set()
+    task.cancel()
+    await message.answer("Отменяю скачивание...")
 
 
 @router.message(F.text)

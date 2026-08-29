@@ -2,12 +2,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
+
+try:
+    # Официальный способ прервать скачивание yt-dlp изнутри — поднять это
+    # исключение из progress_hooks/postprocessor_hooks (см. README yt-dlp,
+    # раздел про хуки). Есть в yt-dlp давно, но на случай очень старой
+    # версии в окружении — мягкий fallback ниже, чтобы бот не падал на
+    # импорте: cancel_event всё равно остановит поток, просто без
+    # "красивого" отличия от прочих ошибок yt-dlp внутри самого yt-dlp.
+    from yt_dlp.utils import DownloadCancelled
+except ImportError:  # pragma: no cover - зависит от версии yt-dlp
+    class DownloadCancelled(DownloadError):  # type: ignore[no-redef]
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +39,10 @@ class LiveStreamNotSupportedError(Exception):
 
 class NoFormatsAvailableError(Exception):
     """yt-dlp не вернул ни одного пригодного видеоформата."""
+
+
+class DownloadCancelledError(Exception):
+    """Скачивание прервано пользователем через /cancel."""
 
 
 @dataclass
@@ -232,8 +249,17 @@ def _stream_label(info: dict) -> str:
     return "видео"
 
 
-def _make_progress_hook(on_progress: Callable[[float | None, str], None]):
+def _make_progress_hook(
+    on_progress: Callable[[float | None, str], None],
+    cancel_event: threading.Event | None,
+):
     def hook(d: dict) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            # Пользователь нажал /cancel — прерываем скачивание изнутри
+            # потока прямо здесь, не дожидаясь следующего шага. progress_hook
+            # зовётся часто (по мере получения чанков), поэтому реакция
+            # почти мгновенная.
+            raise DownloadCancelled("Cancelled by user")
         status = d.get("status")
         if status == "downloading":
             downloaded = d.get("downloaded_bytes") or 0
@@ -248,8 +274,16 @@ def _make_progress_hook(on_progress: Callable[[float | None, str], None]):
     return hook
 
 
-def _make_postprocessor_hook(on_progress: Callable[[float | None, str], None]):
+def _make_postprocessor_hook(
+    on_progress: Callable[[float | None, str], None],
+    cancel_event: threading.Event | None,
+):
     def hook(d: dict) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            # Пойманное здесь отменяет только до старта ffmpeg-слияния — сам
+            # ffmpeg-процесс (если уже запущен) достучаться и прервать так
+            # нельзя, но эта стадия обычно быстрая (секунды).
+            raise DownloadCancelled("Cancelled by user")
         if d.get("status") == "started":
             on_progress(None, "обработка")
 
@@ -261,6 +295,7 @@ def _download_sync(
     format_selector: str,
     work_dir: Path,
     on_progress: Callable[[float | None, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> Path:
     outtmpl = str(work_dir / "%(title).200B [%(id)s].%(ext)s")
     ydl_opts = {
@@ -270,8 +305,8 @@ def _download_sync(
         "merge_output_format": "mp4",
     }
     if on_progress is not None:
-        ydl_opts["progress_hooks"] = [_make_progress_hook(on_progress)]
-        ydl_opts["postprocessor_hooks"] = [_make_postprocessor_hook(on_progress)]
+        ydl_opts["progress_hooks"] = [_make_progress_hook(on_progress, cancel_event)]
+        ydl_opts["postprocessor_hooks"] = [_make_postprocessor_hook(on_progress, cancel_event)]
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
         downloads = info.get("requested_downloads") or []
@@ -285,13 +320,24 @@ async def download_video(
     format_selector: str,
     work_dir: Path,
     on_progress: Callable[[float | None, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> Path:
     """on_progress(fraction, label) вызывается синхронно из потока скачивания
     (см. asyncio.to_thread ниже) — не aiogram/asyncio-safe напрямую, вызывающий
-    код (см. ProgressReporter) сам отвечает за безопасный мост в event loop."""
+    код (см. ProgressReporter) сам отвечает за безопасный мост в event loop.
+
+    cancel_event — если он выставлен (threading.Event.set()) из другого
+    потока/корутины, скачивание прерывается изнутри при следующем вызове
+    прогресс-хука (см. _make_progress_hook). Отдельно от этого, отмена самой
+    asyncio.Task (например через Task.cancel(), пока мы ещё ждём своей
+    очереди/слота в семафоре — до вызова этой функции дело не дошло) —
+    обычный asyncio.CancelledError, cancel_event для неё не нужен.
+    """
     try:
         return await asyncio.to_thread(
-            _download_sync, url, format_selector, work_dir, on_progress
+            _download_sync, url, format_selector, work_dir, on_progress, cancel_event
         )
+    except DownloadCancelled as exc:
+        raise DownloadCancelledError(str(exc)) from exc
     except DownloadError as exc:
         raise VideoUnavailableError(str(exc)) from exc

@@ -32,6 +32,7 @@ class EventStatus:
     FAILED_SIZE_LIMIT = "failed_size_limit"
     FAILED_ERROR = "failed_error"
     BLOCKED_DAILY_LIMIT = "blocked_daily_limit"
+    CANCELLED = "cancelled"
 
 
 class User(Base):
@@ -67,6 +68,11 @@ class Event(Base):
     stage: Mapped[str] = mapped_column(String(16))
     status: Mapped[str] = mapped_column(String(32))
     video_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Название видео на момент скачивания — нужно только для /history
+    # (человекочитаемый список последних загрузок). Добавлено позже, чем
+    # остальная таблица — см. Database._migrate() в bot/db/engine.py, там
+    # же ALTER TABLE для уже существующих БД на проде.
+    title: Mapped[str | None] = mapped_column(String(300), nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 

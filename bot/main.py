@@ -9,6 +9,7 @@ from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.enums import ParseMode
 
+from bot.commands import set_bot_commands
 from bot.config import load_config
 from bot.db.engine import Database
 from bot.handlers import get_root_router
@@ -64,6 +65,7 @@ async def main() -> None:
     )
 
     await bot.delete_webhook(drop_pending_updates=True)
+    await set_bot_commands(bot)
     try:
         # config/semaphore/db передаются как extra kwargs в start_polling —
         # aiogram сам прокинет их в обработчики и middleware по имени
