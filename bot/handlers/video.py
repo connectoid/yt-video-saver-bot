@@ -178,6 +178,15 @@ async def handle_resolution_choice(
             )
             return
 
+        try:
+            # Склейка (ffmpeg -c copy) сама по себе обычно быстрая — долгим
+            # чаще оказывается именно аплоад файла в Telegram. Без этого
+            # апдейта пользователь всё это время видел бы одну и ту же
+            # надпись "Собираю файл" и мог решить, что бот завис.
+            await status.edit_text(f"📤 Отправляю {height}p в Telegram...")
+        except Exception:
+            pass
+
         await message.answer_video(FSInputFile(filepath), caption=pending.title)
         await status.delete()
         await _log_event_safe(
