@@ -9,6 +9,23 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
+def _env(name: str, default: str) -> str:
+    """Прочитать переменную окружения, подставив default и когда она вовсе
+    не задана, и когда задана пустой строкой.
+
+    os.getenv(name, default) подставляет default только в первом случае —
+    "VAR=" в .env (переменная присутствует, но пустая) читается как "" и
+    default НЕ применяется. Именно это уронило бота: DATABASE_URL= в .env
+    задумывался как "использовать путь по умолчанию", а получил пустую
+    строку, которую SQLAlchemy не смогла распарсить как URL.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    value = value.strip()
+    return value or default
+
+
 def _parse_admin_ids(raw: str) -> frozenset[int]:
     ids: set[int] = set()
     for chunk in raw.split(","):
@@ -56,22 +73,22 @@ def load_config(env_file: str | Path | None = None) -> Config:
             "BOT_TOKEN не задан. Скопируйте .env.example в .env и укажите токен."
         )
 
-    downloads_dir = BASE_DIR / os.getenv("DOWNLOADS_DIR", "downloads")
+    downloads_dir = BASE_DIR / _env("DOWNLOADS_DIR", "downloads")
     downloads_dir.mkdir(parents=True, exist_ok=True)
 
     default_db_path = BASE_DIR / "bot.db"
-    database_url = os.getenv("DATABASE_URL", f"sqlite+aiosqlite:///{default_db_path}")
+    database_url = _env("DATABASE_URL", f"sqlite+aiosqlite:///{default_db_path}")
 
-    telegram_api_base_url = os.getenv("TELEGRAM_API_BASE_URL", "").strip() or None
+    telegram_api_base_url = _env("TELEGRAM_API_BASE_URL", "") or None
 
     return Config(
         bot_token=bot_token,
-        max_concurrent_downloads=int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3")),
+        max_concurrent_downloads=int(_env("MAX_CONCURRENT_DOWNLOADS", "3")),
         downloads_dir=downloads_dir,
-        log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
-        max_file_size_mb=int(os.getenv("MAX_FILE_SIZE_MB", "50")),
+        log_level=_env("LOG_LEVEL", "INFO").upper(),
+        max_file_size_mb=int(_env("MAX_FILE_SIZE_MB", "50")),
         database_url=database_url,
-        daily_download_limit=int(os.getenv("DAILY_DOWNLOAD_LIMIT", "5")),
-        admin_user_ids=_parse_admin_ids(os.getenv("ADMIN_USER_IDS", "")),
+        daily_download_limit=int(_env("DAILY_DOWNLOAD_LIMIT", "5")),
+        admin_user_ids=_parse_admin_ids(_env("ADMIN_USER_IDS", "")),
         telegram_api_base_url=telegram_api_base_url,
     )
