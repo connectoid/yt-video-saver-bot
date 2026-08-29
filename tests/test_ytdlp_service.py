@@ -209,3 +209,59 @@ def test_postprocessor_hook_ignores_finished():
     hook({"status": "finished"})
 
     assert calls == []
+
+
+def test_estimate_size_prefers_yt_dlp_order_not_largest_file():
+    # Регрессия: раньше среди нескольких кандидатов на одной высоте без
+    # mp4-варианта выбирался просто самый ТЯЖЁЛЫЙ файл — это завышало
+    # оценку, если yt-dlp в реальности выбирает более лёгкий (например,
+    # AV1 вместо VP9 при том же качестве). yt-dlp отдаёт formats
+    # отсортированными от худшего к лучшему по своему приоритету, поэтому
+    # правильный ориентир — последний подходящий элемент в списке, а не
+    # самый большой по размеру.
+    formats = [
+        {
+            "height": 720, "vcodec": "vp09.00.21.08", "acodec": "none",
+            "ext": "webm", "filesize": 60_000_000,
+        },
+        {
+            # Идёт позже в списке => yt-dlp считает его предпочтительнее,
+            # хотя по размеру он меньше.
+            "height": 720, "vcodec": "av01.0.05M.08", "acodec": "none",
+            "ext": "webm", "filesize": 35_000_000,
+        },
+        _audio_only("m4a", abr=128, size=3_200_000),
+    ]
+    assert _estimate_size_bytes(formats, 720) == 35_000_000 + 3_200_000
+
+
+def test_estimate_size_mp4_still_wins_over_later_non_mp4():
+    # mp4 остаётся приоритетным контейнером независимо от порядка — это
+    # то, что реально просит _build_format_selector в первую очередь.
+    formats = [
+        _video_only(720, "mp4", size=32_000_000),
+        {
+            "height": 720, "vcodec": "vp09.00.21.08", "acodec": "none",
+            "ext": "webm", "filesize": 60_000_000,
+        },
+        _audio_only("m4a", abr=128, size=3_200_000),
+    ]
+    assert _estimate_size_bytes(formats, 720) == 32_000_000 + 3_200_000
+
+
+def test_best_audio_size_prefers_last_m4a_not_highest_bitrate():
+    formats = [
+        _audio_only("m4a", abr=48, size=1_000_000),
+        _audio_only("m4a", abr=128, size=3_200_000),
+    ]
+    # Оба m4a — берём последний в списке (порядок yt-dlp), а не тот, что
+    # с большим битрейтом/размером.
+    assert _best_audio_size_bytes(formats) == 3_200_000
+
+
+def test_best_audio_size_falls_back_to_last_non_m4a_when_no_m4a():
+    formats = [
+        _audio_only("webm", abr=160, size=5_000_000),
+        _audio_only("opus", abr=96, size=2_000_000),
+    ]
+    assert _best_audio_size_bytes(formats) == 2_000_000

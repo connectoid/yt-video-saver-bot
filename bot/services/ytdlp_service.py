@@ -73,6 +73,25 @@ def _format_size_bytes(fmt: dict) -> int | None:
     return fmt.get("filesize") or fmt.get("filesize_approx")
 
 
+def _pick_preferred(candidates: list[dict], *, preferred_ext: str) -> dict:
+    """Выбрать из кандидатов тот, который реальнее всего совпадает с тем,
+    что заберёт yt-dlp при скачивании.
+
+    ВАЖНО: раньше здесь был max(..., key=filesize) — брался самый ТЯЖЁЛЫЙ
+    файл среди кандидатов. Это систематически завышало оценку: если для
+    высоты есть несколько потоков (например VP9 и AV1 — AV1 обычно заметно
+    легче при сопоставимом качестве), yt-dlp мог выбрать лёгкий, а мы
+    оценивали по тяжёлому. yt-dlp возвращает info["formats"] уже
+    отсортированным по своему внутреннему приоритету качества — от худшего
+    к лучшему (так же на этом полагается его собственный селектор "best"),
+    поэтому предпочтительный кандидат — последний в списке подходящих, а
+    не самый большой по размеру.
+    """
+    preferred = [f for f in candidates if f.get("ext") == preferred_ext]
+    pool = preferred or candidates
+    return pool[-1]
+
+
 def _best_audio_size_bytes(formats: list[dict]) -> int | None:
     """Размер аудиодорожки, которая будет примешана к видео-потоку — не
     зависит от выбранного разрешения, поэтому считается один раз и
@@ -86,7 +105,7 @@ def _best_audio_size_bytes(formats: list[dict]) -> int | None:
     candidates = [f for f in audio_formats if _format_size_bytes(f)]
     if not candidates:
         return None
-    best = max(candidates, key=lambda f: (f.get("ext") == "m4a", f.get("abr") or 0))
+    best = _pick_preferred(candidates, preferred_ext="m4a")
     return _format_size_bytes(best)
 
 
@@ -110,19 +129,14 @@ def _estimate_size_bytes(formats: list[dict], height: int) -> int | None:
 
     video_candidates = [f for f in video_only if _format_size_bytes(f)]
     if video_candidates:
-        best_video = max(
-            video_candidates, key=lambda f: (f.get("ext") == "mp4", _format_size_bytes(f))
-        )
+        best_video = _pick_preferred(video_candidates, preferred_ext="mp4")
         video_size = _format_size_bytes(best_video)
         audio_size = _best_audio_size_bytes(formats)
         return video_size + audio_size if audio_size else video_size
 
     progressive_candidates = [f for f in progressive if _format_size_bytes(f)]
     if progressive_candidates:
-        best_progressive = max(
-            progressive_candidates,
-            key=lambda f: (f.get("ext") == "mp4", _format_size_bytes(f)),
-        )
+        best_progressive = _pick_preferred(progressive_candidates, preferred_ext="mp4")
         return _format_size_bytes(best_progressive)
 
     return None
