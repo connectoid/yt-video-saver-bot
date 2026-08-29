@@ -3,6 +3,8 @@ from __future__ import annotations
 import datetime as dt
 from html import escape
 
+from bot.config import Config
+
 
 def format_duration(seconds: int | float | None) -> str:
     if not seconds:
@@ -153,4 +155,26 @@ def build_terms_text(support_contact: str | None) -> str:
         "условиями. Мы можем их менять — актуальный текст всегда доступен "
         "по команде /terms.\n\n"
         f"{contact_line}"
+    )
+
+
+def format_file_limit_note(config: Config) -> str:
+    """Строка для /help про ограничение на размер файла.
+
+    Раньше это был статичный текст с захардкоженными "50 МБ" и "обход в
+    разработке" — устарел ещё до фазы 1 этого проекта, когда обход через
+    локальный Bot API сервер (docker-compose.yml) был реализован и стал
+    опциональным (см. README, "Обход лимита 50 МБ"). Теперь читает
+    РЕАЛЬНЫЙ сконфигурированный лимит (Config.max_file_size_mb — 50 по
+    умолчанию, до 2000 при поднятом локальном сервере), чтобы текст сам
+    не расходился с тем, что бот на самом деле делает.
+    """
+    if config.telegram_api_base_url:
+        return (
+            f"ℹ️ Максимальный размер файла на этом боте: "
+            f"{config.max_file_size_mb} МБ."
+        )
+    return (
+        "⚠️ Ограничение Telegram: боты не могут отправлять файлы крупнее "
+        f"{config.max_file_size_mb} МБ."
     )

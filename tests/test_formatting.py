@@ -133,3 +133,40 @@ def test_build_terms_text_without_support_contact_uses_generic_line():
 def test_build_terms_text_mentions_blocking_by_rightsholder_request():
     text = build_terms_text(None)
     assert "правообладателя" in text
+
+
+from pathlib import Path as _Path
+
+from bot.config import Config as _Config
+from bot.utils.formatting import format_file_limit_note
+
+
+def _make_config_for_limit_note(max_file_size_mb, telegram_api_base_url):
+    return _Config(
+        bot_token="test-token",
+        max_concurrent_downloads=3,
+        downloads_dir=_Path("/tmp"),
+        log_level="INFO",
+        max_file_size_mb=max_file_size_mb,
+        database_url="sqlite+aiosqlite:///:memory:",
+        daily_download_limit=5,
+        admin_user_ids=frozenset(),
+        telegram_api_base_url=telegram_api_base_url,
+    )
+
+
+def test_format_file_limit_note_uses_configured_value_not_hardcoded_50():
+    # раньше в /help был захардкожен текст "50 МБ. Обход в разработке" —
+    # регрессия на случай, если кто-то вернёт статичное число вместо
+    # чтения реального Config.max_file_size_mb.
+    config = _make_config_for_limit_note(2000, "http://localhost:8081")
+    text = format_file_limit_note(config)
+    assert "2000" in text
+    assert "50" not in text
+    assert "в разработке" not in text
+
+
+def test_format_file_limit_note_default_without_local_server():
+    config = _make_config_for_limit_note(50, None)
+    text = format_file_limit_note(config)
+    assert "50" in text
