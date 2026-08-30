@@ -23,6 +23,7 @@ async def get_or_create_user(
     user_id: int,
     username: str | None,
     full_name: str | None,
+    language_code: str | None = None,
 ) -> None:
     now = dt.datetime.now(dt.timezone.utc)
     async with db.session() as session:
@@ -33,6 +34,7 @@ async def get_or_create_user(
                     id=user_id,
                     username=username,
                     full_name=full_name,
+                    language_code=language_code,
                     first_seen_at=now,
                     last_seen_at=now,
                 )
@@ -40,6 +42,14 @@ async def get_or_create_user(
         else:
             user.username = username
             user.full_name = full_name
+            # Обновляем и для уже существующих пользователей (не только при
+            # создании) — так же, как username/full_name: если человек сменит
+            # язык интерфейса Telegram, /stats это со временем подхватит, а не
+            # застрянет на значении с самого первого сообщения. Апдейт NULL'ом
+            # безопасен только если Telegram реально прислал None — apps почти
+            # всегда шлют язык, так что практического риска "затереть
+            # известное значение неизвестным" почти нет.
+            user.language_code = language_code
             user.last_seen_at = now
         await session.commit()
 
@@ -179,6 +189,13 @@ class Stats:
     blocked_video_today: int
     cancelled_today: int
     feedback_today: int
+    # Данные для решения "нужна ли RU/EN-локализация" (User.language_code —
+    # язык клиента Telegram, не выбор языка в боте). non_ru_users и
+    # unknown_language_users вместе с total_users дают разбивку: известно-RU,
+    # известно-не-RU, неизвестно (ещё не писал после появления колонки, или
+    # Telegram не прислал значение).
+    non_ru_users: int
+    unknown_language_users: int
     failures_today_by_status: dict[str, int]
 
 
@@ -268,6 +285,23 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             )
         ).scalar_one()
 
+        # За ВСЁ время (не только сегодня) — это медленно меняющийся срез
+        # аудитории в целом, не однодневное событие вроде остальных полей
+        # выше.
+        non_ru_users = (
+            await session.execute(
+                select(func.count())
+                .select_from(User)
+                .where(User.language_code.is_not(None), User.language_code != "ru")
+            )
+        ).scalar_one()
+
+        unknown_language_users = (
+            await session.execute(
+                select(func.count()).select_from(User).where(User.language_code.is_(None))
+            )
+        ).scalar_one()
+
         failure_rows = await session.execute(
             select(Event.status, func.count())
             .where(
@@ -295,5 +329,7 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             blocked_video_today=blocked_video_today,
             cancelled_today=cancelled_today,
             feedback_today=feedback_today,
+            non_ru_users=non_ru_users,
+            unknown_language_users=unknown_language_users,
             failures_today_by_status=failures_today_by_status,
         )

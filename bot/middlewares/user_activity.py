@@ -30,7 +30,9 @@ class UserActivityMiddleware(BaseMiddleware):
         user = getattr(event, "from_user", None)
         if db is not None and user is not None and not user.is_bot:
             try:
-                await crud.get_or_create_user(db, user.id, user.username, user.full_name)
+                await crud.get_or_create_user(
+                    db, user.id, user.username, user.full_name, user.language_code
+                )
             except Exception:
                 logger.exception("Failed to upsert user %s", user.id)
         return await handler(event, data)

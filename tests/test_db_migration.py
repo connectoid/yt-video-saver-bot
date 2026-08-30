@@ -13,7 +13,7 @@ TABLE / CREATE INDEX. Здесь эмулируем "старую" БД (соз�
 import sqlalchemy as sa
 
 from bot.db.engine import Database
-from bot.db.models import Event
+from bot.db.models import Event, User
 
 
 async def test_create_all_adds_title_column_to_existing_table(tmp_path):
@@ -78,5 +78,49 @@ async def test_create_all_is_idempotent_on_fresh_db(tmp_path):
         result = await session.execute(sa.select(Event).where(Event.video_id == "x"))
         event = result.scalar_one()
         assert event.title == "Title"
+
+    await database.close()
+
+
+async def test_create_all_adds_language_code_column_to_existing_users_table(tmp_path):
+    database = Database(f"sqlite+aiosqlite:///{tmp_path}/legacy_users.db")
+
+    # "Старая" схема — users без колонки language_code, как было бы на
+    # проде до этого изменения (users создавалась вместе с самым первым
+    # релизом, задолго до отслеживания языка клиента).
+    async with database.engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "CREATE TABLE users ("
+                "id BIGINT PRIMARY KEY, "
+                "username VARCHAR(64), "
+                "full_name VARCHAR(256), "
+                "first_seen_at DATETIME, "
+                "last_seen_at DATETIME"
+                ")"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "INSERT INTO users (id, username, full_name) VALUES (1, 'legacy', 'Legacy User')"
+            )
+        )
+
+    await database.create_all()
+
+    async with database.session() as session:
+        user = await session.get(User, 1)
+        assert user is not None
+        assert user.language_code is None  # старая строка — колонки ещё не было
+        assert user.username == "legacy"
+
+    # новый пользователь после миграции должен нормально писать/читать
+    # language_code
+    async with database.session() as session:
+        session.add(User(id=2, username="new", language_code="en"))
+        await session.commit()
+
+        fetched = await session.get(User, 2)
+        assert fetched.language_code == "en"
 
     await database.close()

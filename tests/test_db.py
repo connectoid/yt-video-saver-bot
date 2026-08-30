@@ -153,3 +153,44 @@ async def test_get_stats_counts_cancelled_and_excludes_from_failures(db):
     assert stats.cancelled_today == 1
     assert EventStatus.CANCELLED not in stats.failures_today_by_status
     assert stats.failures_today_by_status[EventStatus.FAILED_ERROR] == 1
+
+
+async def test_get_or_create_user_stores_language_code(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex", "en")
+
+    async with db.session() as session:
+        user = await session.get(User, 1)
+        assert user.language_code == "en"
+
+
+async def test_get_or_create_user_language_code_defaults_to_none(db):
+    # Обратная совместимость: старые вызовы без language_code (и обновления
+    # существующих пользователей клиентами, которые его не передают) не
+    # должны падать — просто NULL.
+    await crud.get_or_create_user(db, 1, "alex", "Alex")
+
+    async with db.session() as session:
+        user = await session.get(User, 1)
+        assert user.language_code is None
+
+
+async def test_get_or_create_user_updates_language_code_on_repeat_visit(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex", "en")
+    await crud.get_or_create_user(db, 1, "alex", "Alex", "ru")
+
+    async with db.session() as session:
+        user = await session.get(User, 1)
+        assert user.language_code == "ru"
+
+
+async def test_get_stats_counts_non_ru_and_unknown_language_users(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex", "ru")
+    await crud.get_or_create_user(db, 2, "bob", "Bob", "en")
+    await crud.get_or_create_user(db, 3, "carl", "Carl", "uk")
+    await crud.get_or_create_user(db, 4, "dave", "Dave", None)
+
+    stats = await crud.get_stats(db)
+
+    assert stats.total_users == 4
+    assert stats.non_ru_users == 2  # en, uk
+    assert stats.unknown_language_users == 1  # dave

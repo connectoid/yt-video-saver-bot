@@ -30,12 +30,20 @@ async def cmd_stats(message: Message, config: Config, db: Database | None = None
 
     stats = await crud.get_stats(db)
 
+    known_language_users = stats.total_users - stats.unknown_language_users
+    if known_language_users > 0:
+        non_ru_percent = f"{stats.non_ru_users / known_language_users * 100:.0f}%"
+    else:
+        non_ru_percent = "—"
+
     lines = [
         "📊 <b>Статистика (текущие UTC-сутки)</b>",
         "",
         f"Всего пользователей: {stats.total_users}",
         f"Новых сегодня: {stats.new_users_today}",
         f"Активных сегодня: {stats.active_users_today}",
+        f"Язык клиента не RU: {stats.non_ru_users} из {known_language_users} известных "
+        f"({non_ru_percent}), неизвестно: {stats.unknown_language_users}",
         "",
         f"Скачано сегодня: {stats.downloads_success_today}",
         f"Скачано всего: {stats.downloads_success_total}",
