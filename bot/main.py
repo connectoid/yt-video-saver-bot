@@ -73,7 +73,7 @@ async def main() -> None:
     )
 
     await bot.delete_webhook(drop_pending_updates=True)
-    await set_bot_commands(bot)
+    await set_bot_commands(bot, config)
     await set_bot_profile(bot)
     try:
         # config/semaphore/db передаются как extra kwargs в start_polling —
