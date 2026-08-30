@@ -194,3 +194,22 @@ async def test_get_stats_counts_non_ru_and_unknown_language_users(db):
     assert stats.total_users == 4
     assert stats.non_ru_users == 2  # en, uk
     assert stats.unknown_language_users == 1  # dave
+
+
+async def test_get_stats_counts_audio_downloads_separately(db):
+    # height=None на DOWNLOAD/SUCCESS — это и есть сигнатура "скачали через
+    # кнопку аудио" (см. bot/handlers/video.py::_perform_download и
+    # bot/db/crud.py::get_stats). Видео-скачивания всегда логируются с
+    # конкретным height.
+    await crud.get_or_create_user(db, 1, "alex", "Alex")
+
+    await crud.log_event(db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS, height=720)
+    await crud.log_event(db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS, height=None)
+    await crud.log_event(db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.SUCCESS, height=None)
+    # Не должно засчитаться как аудио: это провал, не успех.
+    await crud.log_event(db, user_id=1, stage=Stage.DOWNLOAD, status=EventStatus.FAILED_ERROR, height=None)
+
+    stats = await crud.get_stats(db)
+
+    assert stats.downloads_success_today == 3
+    assert stats.audio_downloads_success_today == 2

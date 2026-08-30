@@ -45,7 +45,8 @@ async def cmd_stats(message: Message, config: Config, db: Database | None = None
         f"Язык клиента не RU: {stats.non_ru_users} из {known_language_users} известных "
         f"({non_ru_percent}), неизвестно: {stats.unknown_language_users}",
         "",
-        f"Скачано сегодня: {stats.downloads_success_today}",
+        f"Скачано сегодня: {stats.downloads_success_today} "
+        f"(из них аудио: {stats.audio_downloads_success_today})",
         f"Скачано всего: {stats.downloads_success_total}",
         f"Заблокировано дневным лимитом сегодня: {stats.blocked_by_limit_today}",
         f"Заблокированное видео (запрошено) сегодня: {stats.blocked_video_today}",

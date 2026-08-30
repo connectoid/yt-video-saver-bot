@@ -304,3 +304,64 @@ def test_postprocessor_hook_raises_when_cancel_event_set():
         assert False, "expected DownloadCancelled"
     except DownloadCancelled:
         pass
+
+
+# --- Аудио-кнопка: без ffmpeg-склейки/перекодирования, лучшее качество ---
+
+from unittest.mock import MagicMock, patch
+
+from bot.services.ytdlp_service import AUDIO_FORMAT_SELECTOR, _download_sync
+
+
+def test_audio_format_selector_is_bestaudio_no_container_preference():
+    # Явно НЕ "bestaudio[ext=m4a]/..." — пользователь попросил именно
+    # лучшее качество, без предпочтения контейнера ради совместимости.
+    assert AUDIO_FORMAT_SELECTOR == "bestaudio/best"
+
+
+def _mock_ydl_factory(captured_opts, filepath):
+    def make(opts):
+        captured_opts.append(opts)
+        ydl = MagicMock()
+        ydl.__enter__.return_value = ydl
+        ydl.__exit__.return_value = False
+        ydl.extract_info.return_value = {
+            "requested_downloads": [{"filepath": str(filepath)}]
+        }
+        return ydl
+
+    return make
+
+
+def test_download_sync_sets_merge_output_format_for_video(tmp_path):
+    captured = []
+    target = tmp_path / "video.mp4"
+    with patch(
+        "bot.services.ytdlp_service.YoutubeDL",
+        side_effect=_mock_ydl_factory(captured, target),
+    ):
+        result = _download_sync("https://youtu.be/x", "bestvideo+bestaudio", tmp_path)
+
+    assert captured[0]["merge_output_format"] == "mp4"
+    assert result == target
+
+
+def test_download_sync_omits_merge_output_format_for_audio(tmp_path):
+    # Ключевая проверка фичи "Скачать аудио": без merge_output_format
+    # yt-dlp не запускает ffmpeg на склейку/перекодирование — дорожка
+    # уходит как есть (m4a/webm/opus — что там от YouTube).
+    captured = []
+    target = tmp_path / "audio.m4a"
+    with patch(
+        "bot.services.ytdlp_service.YoutubeDL",
+        side_effect=_mock_ydl_factory(captured, target),
+    ):
+        result = _download_sync(
+            "https://youtu.be/x",
+            AUDIO_FORMAT_SELECTOR,
+            tmp_path,
+            merge_output_format=None,
+        )
+
+    assert "merge_output_format" not in captured[0]
+    assert result == target

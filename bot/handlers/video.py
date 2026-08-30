@@ -145,7 +145,14 @@ async def handle_link(
         )
 
     request_id = request_cache.put(
-        PendingDownload(url=video_url, video_id=info.id, title=info.title, formats=info.formats)
+        PendingDownload(
+            url=video_url,
+            video_id=info.id,
+            title=info.title,
+            uploader=info.uploader,
+            formats=info.formats,
+            audio_format=info.audio_format,
+        )
     )
     keyboard = build_resolution_keyboard(request_id, info.available_heights, info.sizes)
     caption = build_caption(info.title, info.uploader, info.duration, info.view_count)
@@ -160,47 +167,30 @@ async def handle_link(
     await message.answer(caption, reply_markup=keyboard)
 
 
-@router.callback_query(F.data.startswith("dl:"))
-async def handle_resolution_choice(
+async def _perform_download(
+    *,
     callback: CallbackQuery,
     semaphore: asyncio.Semaphore,
     config: Config,
-    db: Database | None = None,
+    db: Database | None,
+    pending: PendingDownload,
+    format_selector: str,
+    height: int | None,
+    merge_output_format: str | None,
 ) -> None:
-    assert callback.data is not None
-    _, request_id, height_str = callback.data.split(":")
-    height = int(height_str)
+    """Общий код скачивания + отправки файла — используется и видео-кнопками
+    (handle_resolution_choice), и кнопкой "Скачать аудио" (handle_audio_choice).
+
+    height=None означает аудио: меняются тексты статусных сообщений, каким
+    методом отправляется файл в Telegram (answer_audio вместо answer_video)
+    и что попадает в Event.height — NULL для DOWNLOAD-события используется
+    в аналитике как признак "это была audio-кнопка, а не разрешение" (см.
+    bot/db/crud.py::get_stats — audio_downloads_success_today; для видео
+    height всегда задан явно из callback_data, так что двусмысленности
+    с существующими данными не возникает).
+    """
     user_id = callback.from_user.id
-
-    pending = request_cache.get(request_id)
-    if pending is None:
-        await callback.answer("Ссылка устарела, отправьте видео ещё раз.", show_alert=True)
-        return
-
-    if pending.video_id and await _is_blocked_safe(db, pending.video_id):
-        # Редкий, но реальный случай: кнопки разрешений уже были показаны,
-        # когда админ заблокировал видео (см. /block в bot/handlers/admin.py)
-        # — проверяем ещё раз здесь, чтобы блокировка применялась сразу же,
-        # а не только к новым запросам /handle_link.
-        await callback.answer(
-            "Это видео недоступно для скачивания — доступ закрыт по запросу "
-            "правообладателя.",
-            show_alert=True,
-        )
-        await _log_event_safe(
-            db,
-            user_id=user_id,
-            stage=Stage.DOWNLOAD,
-            status=EventStatus.BLOCKED_VIDEO,
-            video_id=pending.video_id,
-            height=height,
-        )
-        return
-
-    format_selector = pending.formats.get(height)
-    if format_selector is None:
-        await callback.answer("Это разрешение больше недоступно.", show_alert=True)
-        return
+    target_label = f"{height}p" if height is not None else "аудио"
 
     await callback.answer()
     message = callback.message
@@ -216,7 +206,7 @@ async def handle_resolution_choice(
             "Начнём, как только освободится слот."
         )
     else:
-        status = await message.answer(f"⏳ Скачиваю {height}p...")
+        status = await message.answer(f"⏳ Скачиваю {target_label}...")
 
     work_dir = Path(tempfile.mkdtemp(prefix="dl_", dir=config.downloads_dir))
     cancel_event = threading.Event()
@@ -228,14 +218,20 @@ async def handle_resolution_choice(
             filepath = await ytdlp_service.download_video(
                 pending.url, format_selector, work_dir,
                 on_progress=progress, cancel_event=cancel_event,
+                merge_output_format=merge_output_format,
             )
 
         size_bytes = filepath.stat().st_size
         if size_bytes > config.max_file_size_bytes:
+            note = (
+                "Обход лимита в разработке — попробуйте разрешение поменьше."
+                if height is not None
+                else "Обход лимита в разработке — для этого видео аудио без "
+                "сжатия в лимит пока не помещается."
+            )
             await status.edit_text(
                 f"⚠️ Файл получился {size_bytes / (1024 * 1024):.1f} МБ — это больше "
-                f"лимита Telegram для ботов ({config.max_file_size_mb} МБ). "
-                "Обход лимита в разработке — попробуйте разрешение поменьше."
+                f"лимита Telegram для ботов ({config.max_file_size_mb} МБ). {note}"
             )
             await _log_event_safe(
                 db,
@@ -253,11 +249,19 @@ async def handle_resolution_choice(
             # чаще оказывается именно аплоад файла в Telegram. Без этого
             # апдейта пользователь всё это время видел бы одну и ту же
             # надпись "Собираю файл" и мог решить, что бот завис.
-            await status.edit_text(f"📤 Отправляю {height}p в Telegram...")
+            await status.edit_text(f"📤 Отправляю {target_label} в Telegram...")
         except Exception:
             pass
 
-        await message.answer_video(FSInputFile(filepath), caption=pending.title)
+        if height is not None:
+            await message.answer_video(FSInputFile(filepath), caption=pending.title)
+        else:
+            # title/performer — то, что Telegram покажет прямо в плеере, не
+            # зависит от ID3-тегов внутри файла (у m4a/webm от YouTube их
+            # обычно и нет) — берём из уже извлечённых метаданных видео.
+            await message.answer_audio(
+                FSInputFile(filepath), title=pending.title, performer=pending.uploader
+            )
         await status.delete()
         await _log_event_safe(
             db,
@@ -315,7 +319,7 @@ async def handle_resolution_choice(
             height=height,
         )
     except Exception:
-        logger.exception("Failed to download %s at %sp", pending.url, height)
+        logger.exception("Failed to download %s (%s)", pending.url, target_label)
         await status.edit_text("⚠️ Не удалось скачать видео. Попробуйте ещё раз позже.")
         await _log_event_safe(
             db,
@@ -336,6 +340,107 @@ async def handle_resolution_choice(
             active_downloads.pop(user_id, None)
         await download_queue.leave(queue_token)
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+@router.callback_query(F.data.startswith("dl:"))
+async def handle_resolution_choice(
+    callback: CallbackQuery,
+    semaphore: asyncio.Semaphore,
+    config: Config,
+    db: Database | None = None,
+) -> None:
+    assert callback.data is not None
+    _, request_id, height_str = callback.data.split(":")
+    height = int(height_str)
+    user_id = callback.from_user.id
+
+    pending = request_cache.get(request_id)
+    if pending is None:
+        await callback.answer("Ссылка устарела, отправьте видео ещё раз.", show_alert=True)
+        return
+
+    if pending.video_id and await _is_blocked_safe(db, pending.video_id):
+        # Редкий, но реальный случай: кнопки разрешений уже были показаны,
+        # когда админ заблокировал видео (см. /block в bot/handlers/admin.py)
+        # — проверяем ещё раз здесь, чтобы блокировка применялась сразу же,
+        # а не только к новым запросам /handle_link.
+        await callback.answer(
+            "Это видео недоступно для скачивания — доступ закрыт по запросу "
+            "правообладателя.",
+            show_alert=True,
+        )
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.BLOCKED_VIDEO,
+            video_id=pending.video_id,
+            height=height,
+        )
+        return
+
+    format_selector = pending.formats.get(height)
+    if format_selector is None:
+        await callback.answer("Это разрешение больше недоступно.", show_alert=True)
+        return
+
+    await _perform_download(
+        callback=callback,
+        semaphore=semaphore,
+        config=config,
+        db=db,
+        pending=pending,
+        format_selector=format_selector,
+        height=height,
+        merge_output_format="mp4",
+    )
+
+
+@router.callback_query(F.data.startswith("dla:"))
+async def handle_audio_choice(
+    callback: CallbackQuery,
+    semaphore: asyncio.Semaphore,
+    config: Config,
+    db: Database | None = None,
+) -> None:
+    """Кнопка "🎵 Скачать аудио" — та же механика, что и у видео
+    (handle_resolution_choice), но без разрешения: одна дорожка лучшего
+    доступного качества, без ffmpeg-склейки/перекодирования (см.
+    ytdlp_service.AUDIO_FORMAT_SELECTOR)."""
+    assert callback.data is not None
+    _, request_id = callback.data.split(":")
+    user_id = callback.from_user.id
+
+    pending = request_cache.get(request_id)
+    if pending is None:
+        await callback.answer("Ссылка устарела, отправьте видео ещё раз.", show_alert=True)
+        return
+
+    if pending.video_id and await _is_blocked_safe(db, pending.video_id):
+        await callback.answer(
+            "Это видео недоступно для скачивания — доступ закрыт по запросу "
+            "правообладателя.",
+            show_alert=True,
+        )
+        await _log_event_safe(
+            db,
+            user_id=user_id,
+            stage=Stage.DOWNLOAD,
+            status=EventStatus.BLOCKED_VIDEO,
+            video_id=pending.video_id,
+        )
+        return
+
+    await _perform_download(
+        callback=callback,
+        semaphore=semaphore,
+        config=config,
+        db=db,
+        pending=pending,
+        format_selector=pending.audio_format,
+        height=None,
+        merge_output_format=None,
+    )
 
 
 @router.message(Command("cancel"))

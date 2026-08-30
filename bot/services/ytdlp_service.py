@@ -28,6 +28,16 @@ logger = logging.getLogger(__name__)
 CURATED_HEIGHTS: list[int] = [1080, 720, 480, 360, 240, 144]
 MAX_RESOLUTION_BUTTONS = 4
 
+# Аудио-кнопка ("Скачать аудио") — качаем лучшую доступную аудиодорожку как
+# есть, без перекодирования в mp3 (это был бы отдельный ffmpeg-проход с
+# реальным CPU-кодированием, а не просто извлечение/ремукс, как сейчас у
+# видео-склейки — см. project_roadmap про экономию CPU на VPS). Из-за этого
+# итоговый файл может быть не только m4a, но и webm/opus — Telegram всё
+# равно принимает и проигрывает такие файлы через send_audio, официальная
+# рекомендация "только mp3/m4a" касается красивого отображения в
+# музыкальном плеере, а не того, отправится ли файл вообще.
+AUDIO_FORMAT_SELECTOR = "bestaudio/best"
+
 
 class VideoUnavailableError(Exception):
     """Видео нельзя получить (приватное, удалено, регион-лок и т.п.)."""
@@ -56,6 +66,7 @@ class VideoInfo:
     available_heights: list[int]
     formats: dict[int, str]  # height -> yt-dlp format selector
     sizes: dict[int, int | None]  # height -> примерный размер файла в байтах (None, если yt-dlp его не знает)
+    audio_format: str  # yt-dlp format selector для кнопки "Скачать аудио"
 
 
 def _base_ydl_opts() -> dict:
@@ -234,6 +245,7 @@ async def fetch_video_info(url: str) -> VideoInfo:
         available_heights=offered,
         formats=format_map,
         sizes=size_map,
+        audio_format=AUDIO_FORMAT_SELECTOR,
     )
 
 
@@ -296,14 +308,18 @@ def _download_sync(
     work_dir: Path,
     on_progress: Callable[[float | None, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    merge_output_format: str | None = "mp4",
 ) -> Path:
     outtmpl = str(work_dir / "%(title).200B [%(id)s].%(ext)s")
     ydl_opts = {
         **_base_ydl_opts(),
         "format": format_selector,
         "outtmpl": outtmpl,
-        "merge_output_format": "mp4",
     }
+    if merge_output_format:
+        # Для аудио (см. download_video) merge_output_format=None — качаем
+        # одну дорожку как есть, форсировать контейнер тут не нужно.
+        ydl_opts["merge_output_format"] = merge_output_format
     if on_progress is not None:
         ydl_opts["progress_hooks"] = [_make_progress_hook(on_progress, cancel_event)]
         ydl_opts["postprocessor_hooks"] = [_make_postprocessor_hook(on_progress, cancel_event)]
@@ -321,6 +337,7 @@ async def download_video(
     work_dir: Path,
     on_progress: Callable[[float | None, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    merge_output_format: str | None = "mp4",
 ) -> Path:
     """on_progress(fraction, label) вызывается синхронно из потока скачивания
     (см. asyncio.to_thread ниже) — не aiogram/asyncio-safe напрямую, вызывающий
@@ -332,10 +349,21 @@ async def download_video(
     asyncio.Task (например через Task.cancel(), пока мы ещё ждём своей
     очереди/слота в семафоре — до вызова этой функции дело не дошло) —
     обычный asyncio.CancelledError, cancel_event для неё не нужен.
+
+    merge_output_format — контейнер, в который yt-dlp сведёт video+audio
+    (по умолчанию mp4, как раньше). Для аудио-кнопки (см.
+    handlers/video.py::handle_audio_choice) передаётся None — качается одна
+    дорожка как есть, без ffmpeg-склейки/перекодирования.
     """
     try:
         return await asyncio.to_thread(
-            _download_sync, url, format_selector, work_dir, on_progress, cancel_event
+            _download_sync,
+            url,
+            format_selector,
+            work_dir,
+            on_progress,
+            cancel_event,
+            merge_output_format,
         )
     except DownloadCancelled as exc:
         raise DownloadCancelledError(str(exc)) from exc

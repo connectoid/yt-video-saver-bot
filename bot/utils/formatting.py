@@ -62,7 +62,7 @@ def build_caption(
     if meta:
         lines.append(" · ".join(meta))
 
-    lines.append("\nВыберите разрешение для скачивания:")
+    lines.append("\nВыберите разрешение или аудио для скачивания:")
     return "\n".join(lines)
 
 
@@ -72,6 +72,18 @@ def render_progress_bar(fraction: float, width: int = 12) -> str:
     fraction = max(0.0, min(1.0, fraction))
     filled = round(fraction * width)
     return "█" * filled + "░" * (width - filled)
+
+
+def format_audio_download_progress(fraction: float | None, label: str) -> str:
+    """То же самое, что format_download_progress, но для кнопки "Скачать
+    аудио" — там нет разрешения, поэтому текст не привязан к "{height}p"."""
+    if label == "обработка":
+        return "🔧 Собираю файл, ещё немного..."
+    if fraction is None:
+        return "⏳ Скачиваю аудио..."
+    percent = round(fraction * 100)
+    bar = render_progress_bar(fraction)
+    return f"⏳ Скачиваю аудио\n{bar} {percent}%"
 
 
 def format_download_progress(height: int, fraction: float | None, label: str) -> str:
@@ -112,6 +124,8 @@ def format_history_entry(
     parts = []
     if height:
         parts.append(f"{height}p")
+    else:
+        parts.append("🎵 аудио")
     size_label = format_size(file_size_bytes, approx=False)
     if size_label:
         parts.append(size_label)

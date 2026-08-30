@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any
 
-from bot.utils.formatting import format_download_progress
+from bot.utils.formatting import format_audio_download_progress, format_download_progress
 from bot.utils.throttle import should_emit_progress
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,12 @@ class ProgressReporter:
     asyncio.run_coroutine_threadsafe.
     """
 
-    def __init__(self, loop: asyncio.AbstractEventLoop, status_message: Any, height: int) -> None:
+    def __init__(
+        self, loop: asyncio.AbstractEventLoop, status_message: Any, height: int | None
+    ) -> None:
+        # height=None — скачивание аудио-кнопкой (нет разрешения), см.
+        # format_audio_download_progress ниже и handlers/video.py::
+        # handle_audio_choice.
         self._loop = loop
         self._status = status_message
         self._height = height
@@ -51,7 +56,10 @@ class ProgressReporter:
             self._last_fraction = fraction
             self._last_label = label
 
-        text = format_download_progress(self._height, fraction, label)
+        if self._height is not None:
+            text = format_download_progress(self._height, fraction, label)
+        else:
+            text = format_audio_download_progress(fraction, label)
         try:
             asyncio.run_coroutine_threadsafe(self._edit(text), self._loop)
         except RuntimeError:

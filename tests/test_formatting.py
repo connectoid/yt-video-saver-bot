@@ -1,4 +1,9 @@
-from bot.utils.formatting import format_size
+from bot.utils.formatting import (
+    build_caption,
+    format_audio_download_progress,
+    format_history_entry,
+    format_size,
+)
 
 
 def test_format_size_megabytes():
@@ -170,3 +175,54 @@ def test_format_file_limit_note_default_without_local_server():
     config = _make_config_for_limit_note(50, None)
     text = format_file_limit_note(config)
     assert "50" in text
+
+
+# --- Аудио-кнопка: прогресс, подпись превью, /history ---
+
+import datetime as dt
+
+
+def test_format_audio_download_progress_no_fraction():
+    text = format_audio_download_progress(None, "аудио")
+    assert text == "⏳ Скачиваю аудио..."
+
+
+def test_format_audio_download_progress_with_fraction():
+    text = format_audio_download_progress(0.5, "аудио")
+    assert "50%" in text
+    assert "1080p" not in text  # нет привязки к разрешению, в отличие от видео
+
+
+def test_format_audio_download_progress_processing_label():
+    text = format_audio_download_progress(None, "обработка")
+    assert text == "🔧 Собираю файл, ещё немного..."
+
+
+def test_build_caption_mentions_audio_option():
+    # Подпись под превью — общая для обеих клавиатур (разрешения + кнопка
+    # аудио), текст не должен звучать так, будто аудио не предлагается.
+    text = build_caption("Title", "Uploader", 120, 1000)
+    assert "аудио" in text.lower()
+
+
+def test_format_history_entry_shows_audio_label_when_height_is_none():
+    entry = format_history_entry(
+        title="Song",
+        video_id="abc12345678",
+        height=None,
+        file_size_bytes=3_000_000,
+        created_at=dt.datetime(2026, 8, 30, tzinfo=dt.timezone.utc),
+    )
+    assert "аудио" in entry
+    assert "Nonep" not in entry
+
+
+def test_format_history_entry_still_shows_height_for_video():
+    entry = format_history_entry(
+        title="Video",
+        video_id="abc12345678",
+        height=720,
+        file_size_bytes=30_000_000,
+        created_at=dt.datetime(2026, 8, 30, tzinfo=dt.timezone.utc),
+    )
+    assert "720p" in entry

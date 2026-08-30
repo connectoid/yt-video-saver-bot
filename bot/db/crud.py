@@ -196,6 +196,11 @@ class Stats:
     # Telegram не прислал значение).
     non_ru_users: int
     unknown_language_users: int
+    # Из downloads_success_today — сколько из них через кнопку "Скачать
+    # аудио" (Event.height IS NULL для DOWNLOAD/SUCCESS — см.
+    # bot/handlers/video.py::_perform_download). Видео-скачиваний сегодня,
+    # соответственно, downloads_success_today - audio_downloads_success_today.
+    audio_downloads_success_today: int
     failures_today_by_status: dict[str, int]
 
 
@@ -285,6 +290,19 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             )
         ).scalar_one()
 
+        audio_downloads_success_today = (
+            await session.execute(
+                select(func.count())
+                .select_from(Event)
+                .where(
+                    Event.stage == Stage.DOWNLOAD,
+                    Event.status == EventStatus.SUCCESS,
+                    Event.height.is_(None),
+                    Event.created_at >= start,
+                )
+            )
+        ).scalar_one()
+
         # За ВСЁ время (не только сегодня) — это медленно меняющийся срез
         # аудитории в целом, не однодневное событие вроде остальных полей
         # выше.
@@ -325,6 +343,7 @@ async def get_stats(db: Database, now: dt.datetime | None = None) -> Stats:
             active_users_today=active_users_today,
             downloads_success_today=downloads_success_today,
             downloads_success_total=downloads_success_total,
+            audio_downloads_success_today=audio_downloads_success_today,
             blocked_by_limit_today=blocked_by_limit_today,
             blocked_video_today=blocked_video_today,
             cancelled_today=cancelled_today,

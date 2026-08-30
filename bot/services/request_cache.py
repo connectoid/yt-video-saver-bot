@@ -10,7 +10,9 @@ class PendingDownload:
     url: str
     video_id: str
     title: str
+    uploader: str | None
     formats: dict[int, str]  # height -> yt-dlp format selector
+    audio_format: str  # yt-dlp format selector для кнопки "Скачать аудио"
     created_at: float = field(default_factory=time.monotonic)
 
 
