@@ -131,11 +131,34 @@ docker compose up -d
 
 - **Отображаемое имя** ("TubeDrop"), **About** (короткое описание на
   странице профиля и в превью при пересылке ссылки на бота) и
-  **Description** (текст в пустом чате до нажатия "Старт") — задаются в
-  коде, `bot/profile.py`, и применяются автоматически при каждом старте
-  бота (`set_bot_profile()`, вызывается из `bot/main.py` вслед за
-  `set_bot_commands()`). Не нужно ничего настраивать руками в
-  @BotFather — после `python -m bot` профиль обновится сам.
+  **Description** (текст в пустом чате до нажатия "Старт") — заданы в
+  коде, `bot/profile.py` (`BOT_NAME`/`BOT_SHORT_DESCRIPTION`/
+  `BOT_DESCRIPTION` + функция `set_bot_profile()`), но применяются
+  **вручную, один раз**, а не автоматически при каждом старте бота.
+  Раньше `set_bot_profile()` вызывалась из `bot/main.py` при каждом
+  запуске — оказалось, что `setMyName` (в отличие от `setMyCommands`) у
+  Telegram под отдельным жёстким флуд-контролем, и частые перезапуски
+  при деплое упёрлись в `TelegramRetryAfter` на несколько часов. Чтобы
+  применить/обновить профиль — запустить один раз вручную, например:
+  ```bash
+  python -c "
+  import asyncio
+  from aiogram import Bot
+  from bot.config import load_config
+  from bot.profile import set_bot_profile
+
+  async def main():
+      config = load_config()
+      bot = Bot(token=config.bot_token)
+      await set_bot_profile(bot)
+      await bot.session.close()
+
+  asyncio.run(main())
+  "
+  ```
+  или вручную через @BotFather (`/setname`, `/setabouttext`,
+  `/setdescription`) — это то же самое поле Bot API, способы
+  взаимозаменяемы.
 - **Username** (`@tubedrop_bot`) Bot API менять не умеет вообще — это
   разовая ручная настройка через @BotFather: `/setusername`, выбрать
   бота, ввести `tubedrop_bot` (проверьте, что имя свободно — @BotFather
