@@ -405,6 +405,7 @@ def test_download_sync_without_cookies_tries_tv_client_first(tmp_path):
     clients = captured[0]["extractor_args"]["youtube"]["player_client"]
     assert clients[0] == "tv"
     assert "cookiefile" not in captured[0]
+    assert clients[-1] == "android_vr"  # страховочный минимум качества, см. README
 
 
 def test_download_sync_with_cookies_sets_cookiefile_and_skips_tv_client(tmp_path):
@@ -427,3 +428,26 @@ def test_download_sync_with_cookies_sets_cookiefile_and_skips_tv_client(tmp_path
     clients = captured[0]["extractor_args"]["youtube"]["player_client"]
     assert "tv" not in clients
     assert clients[0] == "web_safari"
+    assert clients[-1] == "android_vr"  # страховочный минимум качества, см. README
+
+
+def test_android_vr_is_always_present_as_last_resort_client(tmp_path):
+    # Регрессия: прод-баг 2026-08-31 (WARNING: Only images are available
+    # for download / YouTube is forcing SABR streaming) — для сильно
+    # ограниченных видео tv/web_safari/web не отдают ни одного настоящего
+    # формата, только storyboard. android_vr в этом случае — единственный
+    # источник хоть какого-то видео (без PO-токена и без кук), поэтому
+    # должен быть в списке клиентов ВСЕГДА, а не только с куками.
+    for cookies_file in (None, tmp_path / "cookies.txt"):
+        captured = []
+        target = tmp_path / "video.mp4"
+        with patch(
+            "bot.services.ytdlp_service.YoutubeDL",
+            side_effect=_mock_ydl_factory(captured, target),
+        ):
+            _download_sync(
+                "https://youtu.be/x", "bestvideo+bestaudio", tmp_path,
+                cookies_file=cookies_file,
+            )
+        clients = captured[0]["extractor_args"]["youtube"]["player_client"]
+        assert "android_vr" in clients
