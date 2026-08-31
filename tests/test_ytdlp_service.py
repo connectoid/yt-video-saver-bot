@@ -365,3 +365,41 @@ def test_download_sync_omits_merge_output_format_for_audio(tmp_path):
 
     assert "merge_output_format" not in captured[0]
     assert result == target
+
+
+def test_download_sync_without_cookies_tries_tv_client_first(tmp_path):
+    # Без кук — бесплатная первая линия обхода (не гарантирует результат,
+    # см. README), клиент tv куки всё равно бы проигнорировал.
+    captured = []
+    target = tmp_path / "video.mp4"
+    with patch(
+        "bot.services.ytdlp_service.YoutubeDL",
+        side_effect=_mock_ydl_factory(captured, target),
+    ):
+        _download_sync("https://youtu.be/x", "bestvideo+bestaudio", tmp_path)
+
+    clients = captured[0]["extractor_args"]["youtube"]["player_client"]
+    assert clients[0] == "tv"
+    assert "cookiefile" not in captured[0]
+
+
+def test_download_sync_with_cookies_sets_cookiefile_and_skips_tv_client(tmp_path):
+    # tv использует логин по коду устройства, а не cookie-jar — с куки
+    # порядок клиентов меняется на web_safari/web, иначе кука просто не
+    # применилась бы.
+    captured = []
+    target = tmp_path / "video.mp4"
+    cookies_path = tmp_path / "cookies.txt"
+    with patch(
+        "bot.services.ytdlp_service.YoutubeDL",
+        side_effect=_mock_ydl_factory(captured, target),
+    ):
+        _download_sync(
+            "https://youtu.be/x", "bestvideo+bestaudio", tmp_path,
+            cookies_file=cookies_path,
+        )
+
+    assert captured[0]["cookiefile"] == str(cookies_path)
+    clients = captured[0]["extractor_args"]["youtube"]["player_client"]
+    assert "tv" not in clients
+    assert clients[0] == "web_safari"

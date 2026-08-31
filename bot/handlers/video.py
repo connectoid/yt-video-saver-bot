@@ -75,7 +75,11 @@ async def _is_blocked_safe(db: Database | None, video_id: str) -> bool:
 
 @router.message(YouTubeLinkFilter())
 async def handle_link(
-    message: Message, video_url: str, video_id: str, db: Database | None = None
+    message: Message,
+    video_url: str,
+    video_id: str,
+    db: Database | None = None,
+    config: Config | None = None,
 ) -> None:
     user_id = message.from_user.id if message.from_user else None
 
@@ -96,8 +100,9 @@ async def handle_link(
 
     status = await message.answer("🔎 Получаю информацию о видео...")
 
+    cookies_file = config.cookies_file if config else None
     try:
-        info = await ytdlp_service.fetch_video_info(video_url)
+        info = await ytdlp_service.fetch_video_info(video_url, cookies_file=cookies_file)
     except ytdlp_service.LiveStreamNotSupportedError:
         await status.edit_text("⚠️ Прямые эфиры пока не поддерживаются.")
         if user_id is not None:
@@ -219,6 +224,7 @@ async def _perform_download(
                 pending.url, format_selector, work_dir,
                 on_progress=progress, cancel_event=cancel_event,
                 merge_output_format=merge_output_format,
+                cookies_file=config.cookies_file,
             )
 
         size_bytes = filepath.stat().st_size

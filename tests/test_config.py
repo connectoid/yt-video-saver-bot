@@ -31,3 +31,34 @@ def test_is_admin_false_for_unlisted_id():
 def test_is_admin_false_when_no_admins_configured():
     config = _make_config(frozenset())
     assert config.is_admin(111) is False
+
+
+def _write_env(tmp_path, extra_lines=""):
+    env_path = tmp_path / ".env"
+    env_path.write_text(f"BOT_TOKEN=test-token\n{extra_lines}")
+    return env_path
+
+
+def test_cookies_file_defaults_to_none_when_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("YTDLP_COOKIES_FILE", raising=False)
+    from bot.config import load_config
+
+    config = load_config(env_file=_write_env(tmp_path))
+    assert config.cookies_file is None
+
+
+def test_cookies_file_relative_path_resolved_against_base_dir(tmp_path, monkeypatch):
+    monkeypatch.delenv("YTDLP_COOKIES_FILE", raising=False)
+    from bot.config import BASE_DIR, load_config
+
+    config = load_config(env_file=_write_env(tmp_path, "YTDLP_COOKIES_FILE=cookies.txt\n"))
+    assert config.cookies_file == BASE_DIR / "cookies.txt"
+
+
+def test_cookies_file_absolute_path_kept_as_is(tmp_path, monkeypatch):
+    monkeypatch.delenv("YTDLP_COOKIES_FILE", raising=False)
+    from bot.config import load_config
+
+    absolute = tmp_path / "somewhere" / "cookies.txt"
+    config = load_config(env_file=_write_env(tmp_path, f"YTDLP_COOKIES_FILE={absolute}\n"))
+    assert config.cookies_file == absolute

@@ -52,8 +52,13 @@ class Config:
     telegram_api_base_url: str | None = None
     # Контакт для жалоб на авторские права/удаление видео — показывается в
     # /terms. Необязателен: если не задан, бот просто просит написать
-    # администратору, не называя конкретный контакт.
+    # администратором, не называя конкретный контакт.
     support_contact: str | None = None
+    # Путь к cookies.txt (формат Netscape) для yt-dlp — опциональный обход
+    # проверки YouTube "Sign in to confirm you're not a bot" (датацентровые
+    # IP VPS попадают под неё почти всегда, см. README, раздел про эту
+    # ошибку). Если не задан — yt-dlp работает без кук, как раньше.
+    cookies_file: Path | None = None
 
     @property
     def max_file_size_bytes(self) -> int:
@@ -86,6 +91,9 @@ def load_config(env_file: str | Path | None = None) -> Config:
     telegram_api_base_url = _env("TELEGRAM_API_BASE_URL", "") or None
     support_contact = _env("SUPPORT_CONTACT", "") or None
 
+    cookies_file_raw = _env("YTDLP_COOKIES_FILE", "")
+    cookies_file = (BASE_DIR / cookies_file_raw) if cookies_file_raw else None
+
     return Config(
         bot_token=bot_token,
         max_concurrent_downloads=int(_env("MAX_CONCURRENT_DOWNLOADS", "3")),
@@ -97,4 +105,5 @@ def load_config(env_file: str | Path | None = None) -> Config:
         admin_user_ids=_parse_admin_ids(_env("ADMIN_USER_IDS", "")),
         telegram_api_base_url=telegram_api_base_url,
         support_contact=support_contact,
+        cookies_file=cookies_file,
     )

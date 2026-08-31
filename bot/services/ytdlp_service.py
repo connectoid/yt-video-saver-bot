@@ -69,27 +69,36 @@ class VideoInfo:
     audio_format: str  # yt-dlp format selector для кнопки "Скачать аудио"
 
 
-def _base_ydl_opts() -> dict:
-    return {
+def _base_ydl_opts(cookies_file: Path | None = None) -> dict:
+    # YouTube всё активнее требует "proof-of-origin" токен от клиента "web"
+    # (дефолт у yt-dlp) — датацентровые IP (а VPS это и есть датацентровый
+    # IP) попадают под эту проверку почти всегда, отсюда ERROR: Sign in to
+    # confirm you're not a bot в проде. На практике (проверено на реальных
+    # видео 2026-08-31, версия yt-dlp 2026.08.19) одной подмены клиента на
+    # tv/web_safari уже НЕДОСТАТОЧНО — YouTube ужесточил проверку, это
+    # больше не гарантированный обход, только снижает частоту. Единственный
+    # по-настоящему надёжный способ на сегодня — куки живого YouTube-
+    # аккаунта (см. README, раздел про эту ошибку, ОБЯЗАТЕЛЬНО отдельный/
+    # запасной аккаунт, не основной). Если cookies_file не задан — пробуем
+    # tv/web_safari как и раньше, это бесплатно и без рисков. Если задан —
+    # клиент tv куки заведомо игнорирует (использует свою схему логина
+    # по коду устройства, а не cookie-jar), поэтому меняем порядок на
+    # web_safari/web — им кука реально передаётся.
+    player_clients = ["web_safari", "web"] if cookies_file else ["tv", "web_safari"]
+    opts: dict = {
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
         "restrictfilenames": True,
-        # YouTube всё активнее требует "proof-of-origin" токен от клиента
-        # "web" (по умолчанию у yt-dlp) — датацентровые IP (а VPS это и
-        # есть датацентровый IP) попадают под эту проверку почти всегда,
-        # отсюда ERROR: Sign in to confirm you're not a bot в проде.
-        # Клиенты tv/web_safari эту проверку для публичных видео не
-        # требуют вообще (не нужны куки), поэтому пробуем их вместо
-        # дефолтного web. Если видео возрастное/приватное — не поможет
-        # ничего, кроме куки живого аккаунта, это осознанно не делаем
-        # автоматически (риск для аккаунта, см. README).
-        "extractor_args": {"youtube": {"player_client": ["tv", "web_safari"]}},
+        "extractor_args": {"youtube": {"player_client": player_clients}},
     }
+    if cookies_file:
+        opts["cookiefile"] = str(cookies_file)
+    return opts
 
 
-def _extract_info_sync(url: str) -> dict:
-    with YoutubeDL({**_base_ydl_opts(), "skip_download": True}) as ydl:
+def _extract_info_sync(url: str, cookies_file: Path | None = None) -> dict:
+    with YoutubeDL({**_base_ydl_opts(cookies_file), "skip_download": True}) as ydl:
         return ydl.extract_info(url, download=False)
 
 
@@ -217,9 +226,9 @@ def _select_offered_heights(available_heights: list[int]) -> list[int]:
     return [tier_reps[t] for t in ordered_tiers][:MAX_RESOLUTION_BUTTONS]
 
 
-async def fetch_video_info(url: str) -> VideoInfo:
+async def fetch_video_info(url: str, cookies_file: Path | None = None) -> VideoInfo:
     try:
-        info = await asyncio.to_thread(_extract_info_sync, url)
+        info = await asyncio.to_thread(_extract_info_sync, url, cookies_file)
     except DownloadError as exc:
         raise VideoUnavailableError(str(exc)) from exc
 
@@ -319,10 +328,11 @@ def _download_sync(
     on_progress: Callable[[float | None, str], None] | None = None,
     cancel_event: threading.Event | None = None,
     merge_output_format: str | None = "mp4",
+    cookies_file: Path | None = None,
 ) -> Path:
     outtmpl = str(work_dir / "%(title).200B [%(id)s].%(ext)s")
     ydl_opts = {
-        **_base_ydl_opts(),
+        **_base_ydl_opts(cookies_file),
         "format": format_selector,
         "outtmpl": outtmpl,
     }
@@ -348,6 +358,7 @@ async def download_video(
     on_progress: Callable[[float | None, str], None] | None = None,
     cancel_event: threading.Event | None = None,
     merge_output_format: str | None = "mp4",
+    cookies_file: Path | None = None,
 ) -> Path:
     """on_progress(fraction, label) вызывается синхронно из потока скачивания
     (см. asyncio.to_thread ниже) — не aiogram/asyncio-safe напрямую, вызывающий
@@ -374,6 +385,7 @@ async def download_video(
             on_progress,
             cancel_event,
             merge_output_format,
+            cookies_file,
         )
     except DownloadCancelled as exc:
         raise DownloadCancelledError(str(exc)) from exc
