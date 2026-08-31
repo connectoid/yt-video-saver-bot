@@ -75,6 +75,16 @@ def _base_ydl_opts() -> dict:
         "no_warnings": True,
         "noplaylist": True,
         "restrictfilenames": True,
+        # YouTube всё активнее требует "proof-of-origin" токен от клиента
+        # "web" (по умолчанию у yt-dlp) — датацентровые IP (а VPS это и
+        # есть датацентровый IP) попадают под эту проверку почти всегда,
+        # отсюда ERROR: Sign in to confirm you're not a bot в проде.
+        # Клиенты tv/web_safari эту проверку для публичных видео не
+        # требуют вообще (не нужны куки), поэтому пробуем их вместо
+        # дефолтного web. Если видео возрастное/приватное — не поможет
+        # ничего, кроме куки живого аккаунта, это осознанно не делаем
+        # автоматически (риск для аккаунта, см. README).
+        "extractor_args": {"youtube": {"player_client": ["tv", "web_safari"]}},
     }
 
 
