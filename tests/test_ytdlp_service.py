@@ -42,6 +42,30 @@ def test_only_above_cap_falls_back_to_best():
     assert _select_offered_heights([2160, 1440]) == [2160]
 
 
+from bot.services.ytdlp_service import _build_format_selector
+
+
+def test_format_selector_has_exact_height_tiers_first():
+    selector = _build_format_selector(720)
+    tiers = selector.split("/")
+    assert tiers[0] == "bestvideo[height=720][ext=mp4]+bestaudio[ext=m4a]"
+    assert tiers[1] == "bestvideo[height=720]+bestaudio"
+    assert tiers[2] == "best[height=720]"
+
+
+def test_format_selector_has_fallback_tiers_so_it_never_hard_fails():
+    # Регрессия: прод-баг 2026-08-31 (ERROR: Requested format is not
+    # available) — кнопка обещала высоту, доступную при показе кнопок,
+    # но к моменту фактического скачивания YouTube эту высоту не отдал
+    # (client-специфичное поведение). Без catch-all в конце пользователь
+    # получал жёсткий отказ вместо видео похожего качества.
+    selector = _build_format_selector(720)
+    tiers = selector.split("/")
+    assert tiers[3] == "best[height<=720]"
+    assert tiers[4] == "best"
+    assert tiers[-1] == "best"  # действительно безусловный катч-олл в конце
+
+
 from bot.services.ytdlp_service import _best_audio_size_bytes, _estimate_size_bytes
 
 
