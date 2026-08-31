@@ -10,3 +10,10 @@ downloads/*
 .pytest_cache/
 *.db
 *.db-journal
+
+# Реальные куки YouTube-аккаунта для yt-dlp (YTDLP_COOKIES_FILE) — это
+# credential, эквивалент пароля к сессии, никогда не должен попадать в
+# git. См. README, раздел про ошибку "Sign in to confirm you're not a
+# bot" — файл кладётся на сервер напрямую (scp), не через git.
+cookies.txt
+cookies*.txt
