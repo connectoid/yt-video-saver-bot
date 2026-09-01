@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily cookies health check for yt-video-saver-bot
+
+[Timer]
+OnCalendar=*-*-* 09:00:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

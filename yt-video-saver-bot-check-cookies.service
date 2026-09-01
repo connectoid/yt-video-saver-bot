@@ -1,0 +1,9 @@
+[Unit]
+Description=YouTube Video Saver Bot - cookies health check
+After=network.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/environment
+WorkingDirectory=/root/dev/bots/yt-video-saver-bot/
+ExecStart=/root/dev/bots/yt-video-saver-bot/venv/bin/python -m bot.check_cookies
