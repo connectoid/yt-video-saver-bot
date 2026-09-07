@@ -4,6 +4,7 @@ import datetime as dt
 from html import escape
 
 from bot.config import Config
+from bot.i18n import t
 
 
 def format_duration(seconds: int | float | None) -> str:
@@ -17,7 +18,7 @@ def format_duration(seconds: int | float | None) -> str:
     return f"{minutes}:{secs:02d}"
 
 
-def format_size(num_bytes: int | float | None, *, approx: bool = True) -> str:
+def format_size(num_bytes: int | float | None, lang: str, *, approx: bool = True) -> str:
     """Человекочитаемый размер файла. approx=True добавляет "≈" — все размеры
     на кнопках разрешений оценочные (см. ytdlp_service._estimate_size_bytes),
     а не точные, так что стоит явно на это намекать."""
@@ -25,13 +26,19 @@ def format_size(num_bytes: int | float | None, *, approx: bool = True) -> str:
         return ""
     size = float(num_bytes)
     prefix = "≈" if approx else ""
-    for unit in ("Б", "КБ", "МБ", "ГБ"):
-        if size < 1024 or unit == "ГБ":
-            if unit == "Б":
+    units = (
+        t(lang, "size_unit_b"),
+        t(lang, "size_unit_kb"),
+        t(lang, "size_unit_mb"),
+        t(lang, "size_unit_gb"),
+    )
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == units[0]:
                 return f"{prefix}{int(size)} {unit}"
             return f"{prefix}{size:.1f} {unit}"
         size /= 1024
-    return f"{prefix}{size:.1f} ГБ"
+    return f"{prefix}{size:.1f} {units[-1]}"
 
 
 def format_count(value: int | None) -> str:
@@ -49,6 +56,7 @@ def build_caption(
     uploader: str | None,
     duration: int | None,
     view_count: int | None,
+    lang: str,
 ) -> str:
     lines = [f"🎬 <b>{escape(title)}</b>"]
     if uploader:
@@ -62,7 +70,7 @@ def build_caption(
     if meta:
         lines.append(" · ".join(meta))
 
-    lines.append("\nВыберите разрешение или аудио для скачивания:")
+    lines.append(t(lang, "choose_resolution"))
     return "\n".join(lines)
 
 
@@ -74,33 +82,48 @@ def render_progress_bar(fraction: float, width: int = 12) -> str:
     return "█" * filled + "░" * (width - filled)
 
 
-def format_audio_download_progress(fraction: float | None, label: str) -> str:
+def format_audio_download_progress(fraction: float | None, label: str, lang: str) -> str:
     """То же самое, что format_download_progress, но для кнопки "Скачать
-    аудио" — там нет разрешения, поэтому текст не привязан к "{height}p"."""
-    if label == "обработка":
-        return "🔧 Собираю файл, ещё немного..."
+    аудио" — там нет разрешения, поэтому текст не привязан к "{height}p".
+
+    label — внутренний, языконезависимый ключ стадии ("video"/"audio"/
+    "processing", см. bot/services/ytdlp_service.py::_stream_label и
+    _make_postprocessor_hook), НЕ готовый для показа текст — здесь он
+    используется только для ветвления "обработка или ещё качаем", сам текст
+    для audio-кнопки не зависит от того, video или audio сейчас качается
+    (в отличие от format_download_progress ниже, где label ещё и
+    показывается в скобках)."""
+    if label == "processing":
+        return t(lang, "progress_audio_processing")
     if fraction is None:
-        return "⏳ Скачиваю аудио..."
+        return t(lang, "progress_audio_unknown")
     percent = round(fraction * 100)
     bar = render_progress_bar(fraction)
-    return f"⏳ Скачиваю аудио\n{bar} {percent}%"
+    return t(lang, "progress_audio_percent", bar=bar, percent=percent)
 
 
-def format_download_progress(height: int, fraction: float | None, label: str) -> str:
+def format_download_progress(height: int, fraction: float | None, label: str, lang: str) -> str:
     """Текст статусного сообщения во время скачивания.
 
-    label — что сейчас происходит: "видео"/"аудио" (какая дорожка качается)
-    или "обработка" (склейка видео+аудио через ffmpeg, для неё yt-dlp не
-    сообщает процент). fraction=None — доля неизвестна (например, yt-dlp не
-    знает общий размер потока или ещё не показывает процент).
+    label — внутренний, языконезависимый ключ того, что сейчас происходит:
+    "video"/"audio" (какая дорожка качается) или "processing" (склейка
+    видео+аудио через ffmpeg, для неё yt-dlp не сообщает процент) — см.
+    bot/services/ytdlp_service.py::_stream_label/_make_postprocessor_hook.
+    Переводится в показываемый текст через progress_label_video/
+    progress_label_audio (см. bot/i18n.py). fraction=None — доля неизвестна
+    (например, yt-dlp не знает общий размер потока или ещё не показывает
+    процент).
     """
-    if label == "обработка":
-        return f"🔧 Собираю файл {height}p, ещё немного..."
+    if label == "processing":
+        return t(lang, "progress_video_processing", height=height)
+    label_text = t(lang, f"progress_label_{label}")
     if fraction is None:
-        return f"⏳ Скачиваю {height}p ({label})..."
+        return t(lang, "progress_video_unknown", height=height, label=label_text)
     percent = round(fraction * 100)
     bar = render_progress_bar(fraction)
-    return f"⏳ Скачиваю {height}p ({label})\n{bar} {percent}%"
+    return t(
+        lang, "progress_video_percent", height=height, label=label_text, bar=bar, percent=percent
+    )
 
 
 def format_history_entry(
@@ -110,6 +133,7 @@ def format_history_entry(
     height: int | None,
     file_size_bytes: int | None,
     created_at: dt.datetime,
+    lang: str,
 ) -> str:
     """Одна строка для команды /history.
 
@@ -117,7 +141,7 @@ def format_history_entry(
     Event после успешной отправки), а не оценка с кнопок разрешений,
     поэтому format_size зовётся с approx=False — без "≈".
     """
-    label = escape(title) if title else "Видео"
+    label = escape(title) if title else t(lang, "history_video_fallback_title")
     if video_id:
         label = f'<a href="https://youtu.be/{video_id}">{label}</a>'
 
@@ -125,8 +149,8 @@ def format_history_entry(
     if height:
         parts.append(f"{height}p")
     else:
-        parts.append("🎵 аудио")
-    size_label = format_size(file_size_bytes, approx=False)
+        parts.append(t(lang, "history_audio_label"))
+    size_label = format_size(file_size_bytes, lang, approx=False)
     if size_label:
         parts.append(size_label)
     parts.append(created_at.strftime("%d.%m %H:%M UTC"))
@@ -134,7 +158,7 @@ def format_history_entry(
     return f"• {label}\n  {' · '.join(parts)}"
 
 
-def build_terms_text(support_contact: str | None) -> str:
+def build_terms_text(support_contact: str | None, lang: str) -> str:
     """Текст команды /terms — условия использования и мини-дисклеймер.
 
     Без юридической вычитки — это базовый набросок, закрывающий минимум
@@ -146,33 +170,14 @@ def build_terms_text(support_contact: str | None) -> str:
     Config.support_contact); если не задан, используется общая формулировка.
     """
     contact_line = (
-        f"По вопросам авторских прав или удаления видео: {support_contact}"
+        t(lang, "terms_contact_with", contact=support_contact)
         if support_contact
-        else "По вопросам авторских прав или удаления видео пишите администратору бота."
+        else t(lang, "terms_contact_without")
     )
-    return (
-        "📄 <b>Условия использования</b>\n\n"
-        "1. Бот скачивает видео и Shorts с YouTube по присланной вами ссылке "
-        "и отправляет файл в этот чат.\n"
-        "2. За соблюдение авторских прав и правил YouTube при скачивании и "
-        "дальнейшем использовании видео отвечаете вы. Бот не хранит "
-        "скачанные файлы дольше, чем нужно, чтобы отправить их вам.\n"
-        "3. Мы храним минимум данных для работы бота: ваш Telegram-id, факт "
-        "и время скачиваний (для дневного лимита и статистики), id и "
-        "название скачанных видео (для команды /history). Третьим лицам "
-        "эти данные не передаются.\n"
-        "4. По запросу правообладателя доступ к скачиванию конкретного "
-        "видео может быть закрыт без предупреждения.\n"
-        "5. Бот предоставляется «как есть», без гарантий бесперебойной "
-        "работы.\n"
-        "6. Продолжая пользоваться ботом, вы соглашаетесь с этими "
-        "условиями. Мы можем их менять — актуальный текст всегда доступен "
-        "по команде /terms.\n\n"
-        f"{contact_line}"
-    )
+    return t(lang, "terms_body", contact_line=contact_line)
 
 
-def format_file_limit_note(config: Config) -> str:
+def format_file_limit_note(config: Config, lang: str) -> str:
     """Строка для /help про ограничение на размер файла.
 
     Раньше это был статичный текст с захардкоженными "50 МБ" и "обход в
@@ -184,11 +189,5 @@ def format_file_limit_note(config: Config) -> str:
     не расходился с тем, что бот на самом деле делает.
     """
     if config.telegram_api_base_url:
-        return (
-            f"ℹ️ Максимальный размер файла на этом боте: "
-            f"{config.max_file_size_mb} МБ."
-        )
-    return (
-        "⚠️ Ограничение Telegram: боты не могут отправлять файлы крупнее "
-        f"{config.max_file_size_mb} МБ."
-    )
+        return t(lang, "file_limit_note_local_server", mb=config.max_file_size_mb)
+    return t(lang, "file_limit_note_default", mb=config.max_file_size_mb)

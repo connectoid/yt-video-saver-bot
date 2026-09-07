@@ -1,9 +1,24 @@
-from bot.commands import PUBLIC_COMMANDS
+from bot.commands import PUBLIC_COMMANDS, PUBLIC_COMMANDS_EN
 
 
 def test_public_commands_include_expected_set():
     names = {c.command for c in PUBLIC_COMMANDS}
-    assert names == {"start", "help", "limits", "history", "cancel", "terms", "feedback"}
+    assert names == {
+        "start", "help", "limits", "history", "cancel", "terms", "feedback", "language",
+    }
+
+
+def test_public_commands_en_has_same_command_set_as_ru():
+    # Английский список — те же команды, что и русский (тот же порядок,
+    # только описания на другом языке), см. bot/commands.py.
+    ru_names = [c.command for c in PUBLIC_COMMANDS]
+    en_names = [c.command for c in PUBLIC_COMMANDS_EN]
+    assert ru_names == en_names
+
+
+def test_public_commands_en_have_non_empty_descriptions():
+    for command in PUBLIC_COMMANDS_EN:
+        assert command.description.strip()
 
 
 def test_public_commands_exclude_admin_only_commands():
@@ -68,7 +83,15 @@ async def test_set_bot_commands_sets_default_scope_with_public_commands():
 
     await set_bot_commands(bot, config)
 
-    bot.set_my_commands.assert_awaited_once_with(PUBLIC_COMMANDS)
+    # Без админов — ровно два вызова на дефолтном скоупе: русский список
+    # без language_code и английский с language_code="en" (см.
+    # bot/commands.py::set_bot_commands).
+    assert bot.set_my_commands.await_count == 2
+    first_call, second_call = bot.set_my_commands.await_args_list
+    assert first_call.args == (PUBLIC_COMMANDS,)
+    assert not first_call.kwargs
+    assert second_call.args == (PUBLIC_COMMANDS_EN,)
+    assert second_call.kwargs == {"language_code": "en"}
 
 
 async def test_set_bot_commands_sets_per_admin_chat_scope_with_admin_commands():
@@ -77,8 +100,9 @@ async def test_set_bot_commands_sets_per_admin_chat_scope_with_admin_commands():
 
     await set_bot_commands(bot, config)
 
-    assert bot.set_my_commands.await_count == 2  # дефолт + один админ
-    admin_call = bot.set_my_commands.await_args_list[1]
+    # дефолт RU + дефолт EN + один админ
+    assert bot.set_my_commands.await_count == 3
+    admin_call = bot.set_my_commands.await_args_list[2]
     assert admin_call.args[0] == ADMIN_COMMANDS
     scope = admin_call.kwargs["scope"]
     assert isinstance(scope, BotCommandScopeChat)
@@ -98,8 +122,9 @@ async def test_set_bot_commands_one_admin_failure_does_not_block_others():
 
     await set_bot_commands(bot, config)
 
-    # дефолт + оба админа — оба вызова были СДЕЛАНЫ, даже если один упал
-    assert bot.set_my_commands.await_count == 3
+    # дефолт RU + дефолт EN + оба админа — все вызовы были СДЕЛАНЫ, даже
+    # если один упал
+    assert bot.set_my_commands.await_count == 4
     called_chat_ids = {
         call.kwargs["scope"].chat_id
         for call in bot.set_my_commands.await_args_list

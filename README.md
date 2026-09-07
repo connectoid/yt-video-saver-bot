@@ -698,6 +698,64 @@ docker-compose.yml       — локальный Bot API сервер (обход
   `systemctl daemon-reload && systemctl enable --now
   yt-video-saver-bot-check-cookies.timer`.
 
+- **Локализация RU/EN (2026-09-07)**: `Stats.non_ru_users` (см. выше в
+  этом же разделе, `/stats`) показал, что ~90% пользователей — с языком
+  клиента Telegram отличным от `ru`. Добавлен `bot/i18n.py` — плоский
+  словарь переводов `TRANSLATIONS[lang][key]` + `t(lang, key, **kwargs)`
+  (форматирует `.format(**kwargs)`, с фолбэком на `DEFAULT_LANGUAGE`
+  для неизвестного языка/ключа, чтобы опечатка в ключе не роняла
+  хендлер) и `resolve_language(telegram_language_code, ui_language)`.
+  `DEFAULT_LANGUAGE = "en"` — нейтральный дефолт для всех, чей язык
+  неизвестен или не `ru`, тем же критерием, что и `non_ru_users` в
+  статистике.
+
+  Эффективный язык вычисляется ОДИН раз за апдейт — в
+  `UserActivityMiddleware` (`bot/middlewares/user_activity.py`), сразу
+  после апсерта пользователя, и кладётся в `data["lang"]`. aiogram сам
+  прокидывает `data` по имени параметра, так что любой хендлер получает
+  язык, просто объявив `lang: str` в сигнатуре — без ручного протаскивания
+  через каждый вызов. Приоритет в `resolve_language`: явный выбор через
+  `/language` (`User.ui_language`, новая колонка, см. `_ADDED_COLUMNS` в
+  `bot/db/engine.py`) > язык клиента Telegram (`User.language_code`,
+  распознаём только `ru` отдельно) > `DEFAULT_LANGUAGE`. Middleware для
+  которых `data["lang"]` не приходит из dispatcher-уровня (например,
+  `FeedbackCaptureMiddleware`, `DailyLimitMiddleware` — router-level)
+  читают `data.get("lang", DEFAULT_LANGUAGE)`, а не требуют параметр
+  напрямую — тот же словарь `data` доходит и туда.
+
+  `/language` (`bot/handlers/language.py`) — инлайн-кнопки "English" /
+  "Русский" (подписи специально не переведены под текущий язык — обе
+  сразу, чтобы нужную кнопку можно было узнать, даже уже находясь не в
+  том языке), выбор пишется в `User.ui_language` через
+  `crud.set_ui_language`. Команда добавлена в `PUBLIC_COMMANDS`
+  (`bot/commands.py`) — есть и `PUBLIC_COMMANDS_EN` с англ.
+  описаниями, которые Telegram сам показывает в меню "/" пользователям
+  с английским языком приложения через `set_my_commands(...,
+  language_code="en")` — независимо от `ui_language` конкретного
+  пользователя в БД (два разных, не синхронизируемых понятия, см.
+  комментарий в `bot/commands.py`).
+
+  Переведены все пользовательские сообщения (`/start`, `/help`,
+  `/terms`, `/limits`, `/history`, `/feedback`, все статусы
+  скачивания/прогресса, кнопка "Скачать аудио", единицы размера файла
+  Б/КБ/МБ/ГБ → B/KB/MB/GB). Админ-команды (`/stats`, `/block`,
+  `/unblock`, `/blocklist`, `bot/handlers/admin.py`) и пересылка
+  `/feedback` конкретному админу (`_notify_admins` в
+  `bot/middlewares/feedback_capture.py`) намеренно остались на русском
+  — единственный админ русскоязычный, переводить то, что видит только
+  он, смысла не было.
+
+  Технический побочный эффект: `_stream_label()` и
+  `_make_postprocessor_hook()` (`bot/services/ytdlp_service.py`) раньше
+  возвращали сами русские слова ("видео"/"аудио"/"обработка") как
+  internal label для прогресс-хуков yt-dlp — это работало, пока текст
+  был на одном языке, но было бы неправильно сохранять этот language-
+  зависимый сигнал как internal state. Теперь это языконезависимые
+  ключи ("video"/"audio"/"processing"), а перевод в показываемый
+  текст происходит позже, в `format_download_progress`/
+  `format_audio_download_progress` (`bot/utils/formatting.py`), уже с
+  учётом `lang` конкретного пользователя.
+
 ## Roadmap
 
 Бизнес-контекст (аудитория, монетизация, конкуренты, юридические риски) — в [docs/business-plan.md](docs/business-plan.md). Ниже — техническая часть, фаза 1 (обход 50 МБ, БД, лимиты, аналитика) реализована.

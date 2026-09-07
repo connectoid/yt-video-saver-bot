@@ -13,6 +13,7 @@ from bot.db import crud
 from bot.db.engine import Database
 from bot.db.models import EventStatus, Stage
 from bot.handlers.feedback import FeedbackStates
+from bot.i18n import DEFAULT_LANGUAGE, t
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +84,15 @@ class FeedbackCaptureMiddleware(BaseMiddleware):
 
         await state.clear()
 
+        lang = data.get("lang", DEFAULT_LANGUAGE)
+
         config: Config | None = data.get("config")
         if config is None or not config.admin_user_ids:
-            await event.answer("⚠️ Не удалось отправить — администратор не настроен.")
+            await event.answer(t(lang, "feedback_not_configured"))
             return None
 
         await _notify_admins(event, config)
-        await event.answer("✅ Спасибо! Сообщение отправлено администратору.")
+        await event.answer(t(lang, "feedback_sent"))
 
         db: Database | None = data.get("db")
         user = event.from_user

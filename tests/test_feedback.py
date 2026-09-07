@@ -224,9 +224,11 @@ async def test_middleware_captures_non_text_message_like_photo():
 
 
 async def test_middleware_warns_when_no_admins_configured():
+    # data без "lang" — middleware сама фолбэкает на DEFAULT_LANGUAGE
+    # (bot/i18n.py), сейчас это "en" (см. bot/middlewares/feedback_capture.py).
     middleware = FeedbackCaptureMiddleware()
     handler = AsyncMock(return_value="handled")
-    event = make_event(text="привет")
+    event = make_event(text="hello")
     state = make_state(FeedbackStates.waiting_for_message.state)
     config = make_config(frozenset())
 
@@ -237,5 +239,21 @@ async def test_middleware_warns_when_no_admins_configured():
     event.bot.send_message.assert_not_awaited()
     event.forward.assert_not_awaited()
     event.answer.assert_awaited_once()
+    warning_text = event.answer.call_args.args[0]
+    assert "not configured" in warning_text.lower()
+
+
+async def test_middleware_warns_when_no_admins_configured_respects_lang():
+    middleware = FeedbackCaptureMiddleware()
+    handler = AsyncMock(return_value="handled")
+    event = make_event(text="привет")
+    state = make_state(FeedbackStates.waiting_for_message.state)
+    config = make_config(frozenset())
+
+    result = await middleware(
+        handler, event, {"state": state, "config": config, "lang": "ru"}
+    )
+
+    assert result is None
     warning_text = event.answer.call_args.args[0]
     assert "не настроен" in warning_text

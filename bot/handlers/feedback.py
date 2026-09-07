@@ -6,6 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
+from bot.i18n import TRANSLATIONS, t
+
 router = Router(name="feedback")
 
 
@@ -22,20 +24,14 @@ class FeedbackStates(StatesGroup):
     waiting_for_message = State()
 
 
-FEEDBACK_PROMPT = (
-    "✍️ Напишите одним сообщением, что хотите передать администратору. Подойдёт:\n\n"
-    "• пожелание — какую функцию добавить;\n"
-    "• проблема или ошибка в работе бота;\n"
-    "• жалоба;\n"
-    "• видео скачалось неправильно, не воспроизводится или не скачалось "
-    "вообще — пришлите ссылку на это видео, чтобы можно было "
-    "воспроизвести и исправить проблему.\n\n"
-    "Можно приложить скриншот. Следующее сообщение, которое вы отправите, "
-    "уйдёт администратору напрямую — если передумали, отправьте /cancel."
-)
+# Оставлено как алиас на русский текст ради обратной совместимости (тесты и
+# любой внешний код, который мог на него ссылаться до локализации) — сам
+# хендлер ниже берёт текст через t(lang, "feedback_prompt"), эта константа
+# больше не участвует в реальной отправке.
+FEEDBACK_PROMPT = TRANSLATIONS["ru"]["feedback_prompt"]
 
 
 @router.message(Command("feedback"))
-async def cmd_feedback(message: Message, state: FSMContext) -> None:
+async def cmd_feedback(message: Message, state: FSMContext, lang: str) -> None:
     await state.set_state(FeedbackStates.waiting_for_message)
-    await message.answer(FEEDBACK_PROMPT)
+    await message.answer(t(lang, "feedback_prompt"))

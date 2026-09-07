@@ -148,15 +148,15 @@ from bot.services.ytdlp_service import _make_postprocessor_hook, _make_progress_
 
 
 def test_stream_label_video_only():
-    assert _stream_label({"vcodec": "avc1", "acodec": "none"}) == "видео"
+    assert _stream_label({"vcodec": "avc1", "acodec": "none"}) == "video"
 
 
 def test_stream_label_audio_only():
-    assert _stream_label({"vcodec": "none", "acodec": "m4a"}) == "аудио"
+    assert _stream_label({"vcodec": "none", "acodec": "m4a"}) == "audio"
 
 
 def test_stream_label_progressive_counts_as_video():
-    assert _stream_label({"vcodec": "avc1", "acodec": "m4a"}) == "видео"
+    assert _stream_label({"vcodec": "avc1", "acodec": "m4a"}) == "video"
 
 
 def test_progress_hook_reports_fraction_from_downloaded_and_total():
@@ -170,7 +170,7 @@ def test_progress_hook_reports_fraction_from_downloaded_and_total():
         "info_dict": {"vcodec": "avc1", "acodec": "none"},
     })
 
-    assert calls == [(0.25, "видео")]
+    assert calls == [(0.25, "video")]
 
 
 def test_progress_hook_falls_back_to_estimate_when_total_missing():
@@ -184,7 +184,7 @@ def test_progress_hook_falls_back_to_estimate_when_total_missing():
         "info_dict": {"vcodec": "none", "acodec": "m4a"},
     })
 
-    assert calls == [(0.25, "аудио")]
+    assert calls == [(0.25, "audio")]
 
 
 def test_progress_hook_reports_none_when_total_unknown():
@@ -197,7 +197,7 @@ def test_progress_hook_reports_none_when_total_unknown():
         "info_dict": {"vcodec": "avc1", "acodec": "none"},
     })
 
-    assert calls == [(None, "видео")]
+    assert calls == [(None, "video")]
 
 
 def test_progress_hook_ignores_non_downloading_status_except_finished():
@@ -214,7 +214,7 @@ def test_progress_hook_reports_full_on_finished():
 
     hook({"status": "finished", "info_dict": {"vcodec": "avc1", "acodec": "none"}})
 
-    assert calls == [(1.0, "видео")]
+    assert calls == [(1.0, "video")]
 
 
 def test_postprocessor_hook_reports_processing_stage_on_start():
@@ -223,7 +223,7 @@ def test_postprocessor_hook_reports_processing_stage_on_start():
 
     hook({"status": "started"})
 
-    assert calls == [(None, "обработка")]
+    assert calls == [(None, "processing")]
 
 
 def test_postprocessor_hook_ignores_finished():
@@ -315,7 +315,7 @@ def test_progress_hook_does_not_raise_when_cancel_event_not_set():
 
     hook({"status": "downloading", "downloaded_bytes": 1, "total_bytes": 10, "info_dict": {}})
 
-    assert calls == [(0.1, "видео")]
+    assert calls == [(0.1, "video")]
 
 
 def test_postprocessor_hook_raises_when_cancel_event_set():
@@ -391,9 +391,13 @@ def test_download_sync_omits_merge_output_format_for_audio(tmp_path):
     assert result == target
 
 
-def test_download_sync_without_cookies_tries_tv_client_first(tmp_path):
-    # Без кук — бесплатная первая линия обхода (не гарантирует результат,
-    # см. README), клиент tv куки всё равно бы проигнорировал.
+def test_download_sync_without_cookies_has_no_player_client_override(tmp_path):
+    # 2026-09-01: ручной extractor_args.player_client убран совсем (см.
+    # _base_ydl_opts в bot/services/ytdlp_service.py и README, раздел про
+    # SABR/"Sign in to confirm you're not a bot") — дефолтная логика
+    # yt-dlp сама подбирает клиентов лучше любого захардкоженного списка,
+    # проверено на реальном видео. Без кук ydl_opts вообще не должен
+    # содержать ни extractor_args, ни cookiefile.
     captured = []
     target = tmp_path / "video.mp4"
     with patch(
@@ -402,15 +406,13 @@ def test_download_sync_without_cookies_tries_tv_client_first(tmp_path):
     ):
         _download_sync("https://youtu.be/x", "bestvideo+bestaudio", tmp_path)
 
-    clients = captured[0]["extractor_args"]["youtube"]["player_client"]
-    assert clients[0] == "tv"
+    assert "extractor_args" not in captured[0]
     assert "cookiefile" not in captured[0]
 
 
-def test_download_sync_with_cookies_sets_cookiefile_and_skips_tv_client(tmp_path):
-    # tv использует логин по коду устройства, а не cookie-jar — с куки
-    # порядок клиентов меняется на web_safari/web, иначе кука просто не
-    # применилась бы.
+def test_download_sync_with_cookies_sets_cookiefile_without_player_client(tmp_path):
+    # Та же логика с куками: только cookiefile добавляется, player_client
+    # по-прежнему не трогаем (см. предыдущий тест и README).
     captured = []
     target = tmp_path / "video.mp4"
     cookies_path = tmp_path / "cookies.txt"
@@ -424,6 +426,4 @@ def test_download_sync_with_cookies_sets_cookiefile_and_skips_tv_client(tmp_path
         )
 
     assert captured[0]["cookiefile"] == str(cookies_path)
-    clients = captured[0]["extractor_args"]["youtube"]["player_client"]
-    assert "tv" not in clients
-    assert clients[0] == "web_safari"
+    assert "extractor_args" not in captured[0]

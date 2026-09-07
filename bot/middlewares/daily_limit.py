@@ -10,6 +10,7 @@ from bot.config import Config
 from bot.db import crud
 from bot.db.engine import Database
 from bot.db.models import EventStatus, Stage
+from bot.i18n import DEFAULT_LANGUAGE, t
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +64,9 @@ class DailyLimitMiddleware(BaseMiddleware):
         except Exception:
             logger.exception("Failed to log blocked_daily_limit event for user %s", user_id)
 
+        lang = data.get("lang", DEFAULT_LANGUAGE)
         await event.answer(
-            f"⚠️ Дневной лимит скачиваний исчерпан ({config.daily_download_limit} в сутки). "
-            "Попробуйте снова после полуночи по UTC.",
+            t(lang, "daily_limit_exceeded", limit=config.daily_download_limit),
             show_alert=True,
         )
         return None

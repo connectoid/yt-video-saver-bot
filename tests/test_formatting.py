@@ -7,27 +7,27 @@ from bot.utils.formatting import (
 
 
 def test_format_size_megabytes():
-    assert format_size(45_000_000) == "≈42.9 МБ"
+    assert format_size(45_000_000, "ru") == "≈42.9 МБ"
 
 
 def test_format_size_gigabytes():
-    assert format_size(2_147_483_648) == "≈2.0 ГБ"
+    assert format_size(2_147_483_648, "ru") == "≈2.0 ГБ"
 
 
 def test_format_size_bytes():
-    assert format_size(500) == "≈500 Б"
+    assert format_size(500, "ru") == "≈500 Б"
 
 
 def test_format_size_none_is_empty():
-    assert format_size(None) == ""
+    assert format_size(None, "ru") == ""
 
 
 def test_format_size_zero_is_empty():
-    assert format_size(0) == ""
+    assert format_size(0, "ru") == ""
 
 
 def test_format_size_without_approx_prefix():
-    assert format_size(45_000_000, approx=False) == "42.9 МБ"
+    assert format_size(45_000_000, "ru", approx=False) == "42.9 МБ"
 
 
 from bot.utils.formatting import format_download_progress, render_progress_bar
@@ -51,19 +51,19 @@ def test_render_progress_bar_clamps_out_of_range():
 
 
 def test_format_download_progress_with_fraction():
-    text = format_download_progress(720, 0.5, "видео")
+    text = format_download_progress(720, 0.5, "video", "ru")
     assert "720p" in text
     assert "видео" in text
     assert "50%" in text
 
 
 def test_format_download_progress_unknown_fraction():
-    text = format_download_progress(720, None, "аудио")
+    text = format_download_progress(720, None, "audio", "ru")
     assert text == "⏳ Скачиваю 720p (аудио)..."
 
 
 def test_format_download_progress_processing_stage():
-    text = format_download_progress(720, None, "обработка")
+    text = format_download_progress(720, None, "processing", "ru")
     assert "Собираю файл 720p" in text
 
 
@@ -79,6 +79,7 @@ def test_format_history_entry_with_title_and_link():
         height=720,
         file_size_bytes=45_000_000,
         created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+        lang="ru",
     )
     assert '<a href="https://youtu.be/abc123">Cool Video</a>' in text
     assert "720p" in text
@@ -93,6 +94,7 @@ def test_format_history_entry_escapes_title():
         height=720,
         file_size_bytes=1000,
         created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+        lang="ru",
     )
     assert "<script>" not in text
     assert "&lt;script&gt;" in text
@@ -105,8 +107,21 @@ def test_format_history_entry_missing_title_falls_back():
         height=720,
         file_size_bytes=1000,
         created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+        lang="ru",
     )
     assert "Видео" in text
+
+
+def test_format_history_entry_missing_title_falls_back_english():
+    text = format_history_entry(
+        title=None,
+        video_id="abc123",
+        height=720,
+        file_size_bytes=1000,
+        created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+        lang="en",
+    )
+    assert "Video" in text
 
 
 def test_format_history_entry_missing_video_id_no_link():
@@ -116,6 +131,7 @@ def test_format_history_entry_missing_video_id_no_link():
         height=720,
         file_size_bytes=1000,
         created_at=dt.datetime(2026, 8, 29, 14, 3, tzinfo=dt.timezone.utc),
+        lang="ru",
     )
     assert "<a href" not in text
     assert "Cool" in text
@@ -125,19 +141,26 @@ from bot.utils.formatting import build_terms_text
 
 
 def test_build_terms_text_with_support_contact():
-    text = build_terms_text("@support_user")
+    text = build_terms_text("@support_user", "ru")
     assert "@support_user" in text
     assert "/terms" in text
 
 
 def test_build_terms_text_without_support_contact_uses_generic_line():
-    text = build_terms_text(None)
+    text = build_terms_text(None, "ru")
     assert "администратору" in text
 
 
 def test_build_terms_text_mentions_blocking_by_rightsholder_request():
-    text = build_terms_text(None)
+    text = build_terms_text(None, "ru")
     assert "правообладателя" in text
+
+
+def test_build_terms_text_english():
+    text = build_terms_text("@support_user", "en")
+    assert "@support_user" in text
+    assert "/terms" in text
+    assert "Terms of Use" in text
 
 
 from pathlib import Path as _Path
@@ -165,7 +188,7 @@ def test_format_file_limit_note_uses_configured_value_not_hardcoded_50():
     # регрессия на случай, если кто-то вернёт статичное число вместо
     # чтения реального Config.max_file_size_mb.
     config = _make_config_for_limit_note(2000, "http://localhost:8081")
-    text = format_file_limit_note(config)
+    text = format_file_limit_note(config, "ru")
     assert "2000" in text
     assert "50" not in text
     assert "в разработке" not in text
@@ -173,7 +196,7 @@ def test_format_file_limit_note_uses_configured_value_not_hardcoded_50():
 
 def test_format_file_limit_note_default_without_local_server():
     config = _make_config_for_limit_note(50, None)
-    text = format_file_limit_note(config)
+    text = format_file_limit_note(config, "ru")
     assert "50" in text
 
 
@@ -183,26 +206,37 @@ import datetime as dt
 
 
 def test_format_audio_download_progress_no_fraction():
-    text = format_audio_download_progress(None, "аудио")
+    text = format_audio_download_progress(None, "audio", "ru")
     assert text == "⏳ Скачиваю аудио..."
 
 
 def test_format_audio_download_progress_with_fraction():
-    text = format_audio_download_progress(0.5, "аудио")
+    text = format_audio_download_progress(0.5, "audio", "ru")
     assert "50%" in text
     assert "1080p" not in text  # нет привязки к разрешению, в отличие от видео
 
 
 def test_format_audio_download_progress_processing_label():
-    text = format_audio_download_progress(None, "обработка")
+    text = format_audio_download_progress(None, "processing", "ru")
     assert text == "🔧 Собираю файл, ещё немного..."
+
+
+def test_format_audio_download_progress_english():
+    text = format_audio_download_progress(0.5, "audio", "en")
+    assert text == "⏳ Downloading audio..." or "Downloading audio" in text
+    assert "50%" in text
 
 
 def test_build_caption_mentions_audio_option():
     # Подпись под превью — общая для обеих клавиатур (разрешения + кнопка
     # аудио), текст не должен звучать так, будто аудио не предлагается.
-    text = build_caption("Title", "Uploader", 120, 1000)
+    text = build_caption("Title", "Uploader", 120, 1000, "ru")
     assert "аудио" in text.lower()
+
+
+def test_build_caption_mentions_audio_option_english():
+    text = build_caption("Title", "Uploader", 120, 1000, "en")
+    assert "audio" in text.lower()
 
 
 def test_format_history_entry_shows_audio_label_when_height_is_none():
@@ -212,6 +246,7 @@ def test_format_history_entry_shows_audio_label_when_height_is_none():
         height=None,
         file_size_bytes=3_000_000,
         created_at=dt.datetime(2026, 8, 30, tzinfo=dt.timezone.utc),
+        lang="ru",
     )
     assert "аудио" in entry
     assert "Nonep" not in entry
@@ -224,5 +259,11 @@ def test_format_history_entry_still_shows_height_for_video():
         height=720,
         file_size_bytes=30_000_000,
         created_at=dt.datetime(2026, 8, 30, tzinfo=dt.timezone.utc),
+        lang="ru",
     )
     assert "720p" in entry
+
+
+def test_format_size_english_units():
+    assert format_size(45_000_000, "en") == "≈42.9 MB"
+    assert format_size(500, "en") == "≈500 B"

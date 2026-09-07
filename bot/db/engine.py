@@ -18,6 +18,7 @@ from bot.db.models import Base
 _ADDED_COLUMNS: dict[tuple[str, str], str] = {
     ("events", "title"): "VARCHAR(300)",
     ("users", "language_code"): "VARCHAR(8)",
+    ("users", "ui_language"): "VARCHAR(8)",
 }
 
 # (имя_индекса) -> (таблица, колонки по порядку) для CREATE INDEX на уже

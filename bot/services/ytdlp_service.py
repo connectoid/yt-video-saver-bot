@@ -10,6 +10,8 @@ from typing import Callable
 from yt_dlp import YoutubeDL
 from yt_dlp.utils import DownloadError
 
+from bot.i18n import t
+
 try:
     # Официальный способ прервать скачивание yt-dlp изнутри — поднять это
     # исключение из progress_hooks/postprocessor_hooks (см. README yt-dlp,
@@ -253,7 +255,7 @@ def _select_offered_heights(available_heights: list[int]) -> list[int]:
     return [tier_reps[t] for t in ordered_tiers][:MAX_RESOLUTION_BUTTONS]
 
 
-async def fetch_video_info(url: str, cookies_file: Path | None = None) -> VideoInfo:
+async def fetch_video_info(url: str, lang: str, cookies_file: Path | None = None) -> VideoInfo:
     try:
         info = await asyncio.to_thread(_extract_info_sync, url, cookies_file)
     except DownloadError as exc:
@@ -283,7 +285,11 @@ async def fetch_video_info(url: str, cookies_file: Path | None = None) -> VideoI
 
     return VideoInfo(
         id=info.get("id", ""),
-        title=info.get("title") or "Видео",
+        # yt-dlp иногда не отдаёт title вовсе — фолбэк переиспользует тот же
+        # ключ, что и /history для отсутствующего названия (bot/i18n.py::
+        # history_video_fallback_title), это один и тот же смысл "название
+        # видео неизвестно", отдельный ключ был бы избыточен.
+        title=info.get("title") or t(lang, "history_video_fallback_title"),
         uploader=info.get("uploader"),
         duration=info.get("duration"),
         view_count=info.get("view_count"),
@@ -296,15 +302,23 @@ async def fetch_video_info(url: str, cookies_file: Path | None = None) -> VideoI
 
 
 def _stream_label(info: dict) -> str:
+    """Внутренний, ЯЗЫКОНЕЗАВИСИМЫЙ ключ стадии ("video"/"audio") — не
+    текст для показа пользователю. До локализации (2026-09-07) тут были
+    сами русские слова "видео"/"аудио", напрямую попадавшие в статусные
+    сообщения; после появления EN-интерфейса это стало внутренним
+    сигналом, который bot/utils/formatting.py переводит через
+    progress_label_video/progress_label_audio (см. bot/i18n.py) уже с
+    учётом lang конкретного пользователя. См. также _make_postprocessor_hook
+    ниже — там тем же способом ключ "processing" вместо бывшего "обработка"."""
     vcodec = info.get("vcodec")
     acodec = info.get("acodec")
     has_video = vcodec not in (None, "none")
     has_audio = acodec not in (None, "none")
     if has_video and not has_audio:
-        return "видео"
+        return "video"
     if has_audio and not has_video:
-        return "аудио"
-    return "видео"
+        return "audio"
+    return "video"
 
 
 def _make_progress_hook(
@@ -343,7 +357,7 @@ def _make_postprocessor_hook(
             # нельзя, но эта стадия обычно быстрая (секунды).
             raise DownloadCancelled("Cancelled by user")
         if d.get("status") == "started":
-            on_progress(None, "обработка")
+            on_progress(None, "processing")
 
     return hook
 

@@ -15,6 +15,18 @@ logger = logging.getLogger(__name__)
 # намеренно не входят — это админ-команды, admin.py молча их игнорирует
 # для не-админов, чтобы не выдавать сам факт их существования; попадание
 # в публичное меню это бы перечеркнуло.
+#
+# PUBLIC_COMMANDS (без суффикса) — это дефолтный список без language_code
+# (см. set_bot_commands ниже), русский, как было и до локализации: имя
+# оставлено как есть, чтобы не трогать вызывающий код без необходимости.
+# PUBLIC_COMMANDS_EN — тот же набор команд, только описания на английском,
+# устанавливается ДОПОЛНИТЕЛЬНО через language_code="en" — Telegram сам
+# показывает нужный вариант в зависимости от языка приложения пользователя
+# (независимо от того, что бот сам считает эффективным языком интерфейса
+# конкретного пользователя, см. bot/i18n.py — это два разных, не всегда
+# совпадающих понятия, и намеренно не синхронизируются: полная синхронизация
+# потребовала бы дёргать set_my_commands с BotCommandScopeChat на каждый
+# /language, а не только при старте бота).
 PUBLIC_COMMANDS: list[BotCommand] = [
     BotCommand(command="start", description="Начать работу с ботом"),
     BotCommand(command="help", description="Как пользоваться ботом"),
@@ -23,12 +35,25 @@ PUBLIC_COMMANDS: list[BotCommand] = [
     BotCommand(command="cancel", description="Отменить текущее скачивание"),
     BotCommand(command="terms", description="Условия использования"),
     BotCommand(command="feedback", description="Написать администратору"),
+    BotCommand(command="language", description="Сменить язык интерфейса"),
+]
+
+PUBLIC_COMMANDS_EN: list[BotCommand] = [
+    BotCommand(command="start", description="Start using the bot"),
+    BotCommand(command="help", description="How to use the bot"),
+    BotCommand(command="limits", description="How many downloads are left today"),
+    BotCommand(command="history", description="Recently downloaded videos"),
+    BotCommand(command="cancel", description="Cancel the current download"),
+    BotCommand(command="terms", description="Terms of use"),
+    BotCommand(command="feedback", description="Message the administrator"),
+    BotCommand(command="language", description="Change interface language"),
 ]
 
 # Меню для админов: то же самое + /stats. Не отдельный список с нуля, а
 # PUBLIC_COMMANDS + одна команда — так он не может незаметно разойтись с
 # публичным меню, если кто-то потом добавит/уберёт команду в одном месте
-# и забудет про другое.
+# и забудет про другое. Только русский — /stats и остальные админ-команды
+# локализация не затронула (единственный админ — русскоязычный, см. README).
 ADMIN_COMMANDS: list[BotCommand] = [
     *PUBLIC_COMMANDS,
     BotCommand(command="stats", description="Статистика бота"),
@@ -41,6 +66,10 @@ async def set_bot_commands(bot: Bot, config: Config) -> None:
     # добавлены — они реже нужны админу "на лету", чем /stats, и пока не
     # запрашивались; их можно добавить в ADMIN_COMMANDS так же, если понадобится.
     await bot.set_my_commands(PUBLIC_COMMANDS)
+    # Тот же дефолтный скоуп, но под language_code="en" — Telegram отдаёт
+    # ИМЕННО этот список пользователям с английским языком приложения,
+    # приоритетнее списка без language_code выше.
+    await bot.set_my_commands(PUBLIC_COMMANDS_EN, language_code="en")
 
     for admin_id in config.admin_user_ids:
         # BotCommandScopeChat персонально на chat_id админа — Telegram

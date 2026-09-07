@@ -196,6 +196,52 @@ async def test_get_stats_counts_non_ru_and_unknown_language_users(db):
     assert stats.unknown_language_users == 1  # dave
 
 
+async def test_get_or_create_user_returns_user_with_current_fields(db):
+    # bot/middlewares/user_activity.py опирается на возвращаемый User (в
+    # частности .ui_language), чтобы не делать лишний запрос после апсерта
+    # — см. get_or_create_user в bot/db/crud.py.
+    user = await crud.get_or_create_user(db, 1, "alex", "Alex", "en")
+    assert user.id == 1
+    assert user.username == "alex"
+    assert user.language_code == "en"
+    assert user.ui_language is None
+
+
+async def test_set_ui_language_overrides_and_persists(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex", "en")
+    await crud.set_ui_language(db, 1, "ru")
+
+    async with db.session() as session:
+        user = await session.get(User, 1)
+        assert user.ui_language == "ru"
+    # language_code (сырой сигнал от Telegram) не должен пострадать от
+    # явного выбора языка — это независимые поля.
+    async with db.session() as session:
+        user = await session.get(User, 1)
+        assert user.language_code == "en"
+
+
+async def test_set_ui_language_reset_to_auto(db):
+    await crud.get_or_create_user(db, 1, "alex", "Alex", "en")
+    await crud.set_ui_language(db, 1, "ru")
+    await crud.set_ui_language(db, 1, None)
+
+    async with db.session() as session:
+        user = await session.get(User, 1)
+        assert user.ui_language is None
+
+
+async def test_set_ui_language_creates_user_if_missing(db):
+    # Не должно упасть, даже если по какой-то причине UserActivityMiddleware
+    # ещё не успела апсертнуть пользователя до /language.
+    await crud.set_ui_language(db, 999, "en")
+
+    async with db.session() as session:
+        user = await session.get(User, 999)
+        assert user is not None
+        assert user.ui_language == "en"
+
+
 async def test_get_stats_counts_audio_downloads_separately(db):
     # height=None на DOWNLOAD/SUCCESS — это и есть сигнатура "скачали через
     # кнопку аудио" (см. bot/handlers/video.py::_perform_download и

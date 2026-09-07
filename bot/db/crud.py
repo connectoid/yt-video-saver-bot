@@ -24,21 +24,27 @@ async def get_or_create_user(
     username: str | None,
     full_name: str | None,
     language_code: str | None = None,
-) -> None:
+) -> User:
+    """Апсерт пользователя. Возвращает User С АКТУАЛЬНЫМИ полями после
+    коммита (session_factory сделан с expire_on_commit=False — см.
+    bot/db/engine.py::Database, так что объект остаётся читаемым и без
+    привязки к сессии). Нужен вызывающему коду (см.
+    bot/middlewares/user_activity.py) для user.ui_language — без лишнего
+    отдельного запроса выбрать эффективный язык интерфейса через
+    bot/i18n.py::resolve_language сразу после апсерта."""
     now = dt.datetime.now(dt.timezone.utc)
     async with db.session() as session:
         user = await session.get(User, user_id)
         if user is None:
-            session.add(
-                User(
-                    id=user_id,
-                    username=username,
-                    full_name=full_name,
-                    language_code=language_code,
-                    first_seen_at=now,
-                    last_seen_at=now,
-                )
+            user = User(
+                id=user_id,
+                username=username,
+                full_name=full_name,
+                language_code=language_code,
+                first_seen_at=now,
+                last_seen_at=now,
             )
+            session.add(user)
         else:
             user.username = username
             user.full_name = full_name
@@ -48,9 +54,34 @@ async def get_or_create_user(
             # застрянет на значении с самого первого сообщения. Апдейт NULL'ом
             # безопасен только если Telegram реально прислал None — apps почти
             # всегда шлют язык, так что практического риска "затереть
-            # известное значение неизвестным" почти нет.
+            # известное значение неизвестным" почти нет. ui_language сюда не
+            # входит — это отдельный, осознанный выбор пользователя (см.
+            # set_ui_language ниже), апсерт при каждом сообщении его не
+            # трогает.
             user.language_code = language_code
             user.last_seen_at = now
+        await session.commit()
+        return user
+
+
+async def set_ui_language(db: Database, user_id: int, ui_language: str | None) -> None:
+    """Сохранить явный выбор языка интерфейса (/language, см.
+    bot/handlers/language.py). ui_language=None сбрасывает выбор обратно на
+    автоопределение по языку клиента Telegram (bot/i18n.py::resolve_language).
+
+    В норме пользователь к этому моменту уже есть в БД (UserActivityMiddleware
+    апсертит его как outer middleware ДО того, как дойдёт до хендлера
+    /language) — но на случай гонки/прямого вызова создаём запись, если её
+    почему-то ещё нет, а не падаем."""
+    now = dt.datetime.now(dt.timezone.utc)
+    async with db.session() as session:
+        user = await session.get(User, user_id)
+        if user is None:
+            session.add(
+                User(id=user_id, ui_language=ui_language, first_seen_at=now, last_seen_at=now)
+            )
+        else:
+            user.ui_language = ui_language
         await session.commit()
 
 

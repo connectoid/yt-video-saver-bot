@@ -124,3 +124,50 @@ async def test_create_all_adds_language_code_column_to_existing_users_table(tmp_
         assert fetched.language_code == "en"
 
     await database.close()
+
+
+async def test_create_all_adds_ui_language_column_to_existing_users_table(tmp_path):
+    # Та же миграция, что и для language_code выше (test_create_all_adds_
+    # language_code_column_to_existing_users_table) — только для
+    # ui_language, добавленной 2026-09-07 вместе с локализацией (см.
+    # bot/db/models.py::User.ui_language, bot/db/engine.py::_ADDED_COLUMNS).
+    database = Database(f"sqlite+aiosqlite:///{tmp_path}/legacy_users_2.db")
+
+    # "Старая" схема — users с language_code, но БЕЗ ui_language, как было
+    # бы на проде до этого изменения.
+    async with database.engine.begin() as conn:
+        await conn.execute(
+            sa.text(
+                "CREATE TABLE users ("
+                "id BIGINT PRIMARY KEY, "
+                "username VARCHAR(64), "
+                "full_name VARCHAR(256), "
+                "language_code VARCHAR(8), "
+                "first_seen_at DATETIME, "
+                "last_seen_at DATETIME"
+                ")"
+            )
+        )
+        await conn.execute(
+            sa.text(
+                "INSERT INTO users (id, username, full_name, language_code) "
+                "VALUES (1, 'legacy', 'Legacy User', 'ru')"
+            )
+        )
+
+    await database.create_all()
+
+    async with database.session() as session:
+        user = await session.get(User, 1)
+        assert user is not None
+        assert user.ui_language is None  # старая строка — колонки ещё не было
+        assert user.language_code == "ru"  # уже существовавшая колонка не пострадала
+
+    async with database.session() as session:
+        session.add(User(id=2, username="new", ui_language="en"))
+        await session.commit()
+
+        fetched = await session.get(User, 2)
+        assert fetched.ui_language == "en"
+
+    await database.close()

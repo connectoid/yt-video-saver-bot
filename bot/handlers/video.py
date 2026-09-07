@@ -18,6 +18,7 @@ from bot.db.engine import Database
 from bot.db.models import EventStatus, Stage
 from bot.filters.youtube_link import YouTubeLinkFilter
 from bot.handlers.feedback import FeedbackStates
+from bot.i18n import t
 from bot.keyboards.resolution import build_resolution_keyboard
 from bot.middlewares.daily_limit import DailyLimitMiddleware
 from bot.services import ytdlp_service
@@ -78,16 +79,14 @@ async def handle_link(
     message: Message,
     video_url: str,
     video_id: str,
+    lang: str,
     db: Database | None = None,
     config: Config | None = None,
 ) -> None:
     user_id = message.from_user.id if message.from_user else None
 
     if await _is_blocked_safe(db, video_id):
-        await message.answer(
-            "🚫 Это видео недоступно для скачивания — доступ закрыт по "
-            "запросу правообладателя."
-        )
+        await message.answer(t(lang, "blocked_video"))
         if user_id is not None:
             await _log_event_safe(
                 db,
@@ -98,20 +97,20 @@ async def handle_link(
             )
         return
 
-    status = await message.answer("🔎 Получаю информацию о видео...")
+    status = await message.answer(t(lang, "fetching_info"))
 
     cookies_file = config.cookies_file if config else None
     try:
-        info = await ytdlp_service.fetch_video_info(video_url, cookies_file=cookies_file)
+        info = await ytdlp_service.fetch_video_info(video_url, lang, cookies_file=cookies_file)
     except ytdlp_service.LiveStreamNotSupportedError:
-        await status.edit_text("⚠️ Прямые эфиры пока не поддерживаются.")
+        await status.edit_text(t(lang, "live_not_supported"))
         if user_id is not None:
             await _log_event_safe(
                 db, user_id=user_id, stage=Stage.INFO_FETCH, status=EventStatus.FAILED_LIVE
             )
         return
     except ytdlp_service.NoFormatsAvailableError:
-        await status.edit_text("⚠️ Не удалось найти доступные форматы для этого видео.")
+        await status.edit_text(t(lang, "no_formats"))
         if user_id is not None:
             await _log_event_safe(
                 db, user_id=user_id, stage=Stage.INFO_FETCH, status=EventStatus.FAILED_NO_FORMATS
@@ -119,10 +118,7 @@ async def handle_link(
         return
     except ytdlp_service.VideoUnavailableError as exc:
         logger.info("Video unavailable for %s: %s", video_url, exc)
-        await status.edit_text(
-            "⚠️ Не получилось получить это видео. Возможно, оно приватное, "
-            "удалено или недоступно в регионе, где работает бот."
-        )
+        await status.edit_text(t(lang, "video_unavailable"))
         if user_id is not None:
             await _log_event_safe(
                 db,
@@ -133,7 +129,7 @@ async def handle_link(
         return
     except Exception:
         logger.exception("Failed to fetch video info for %s", video_url)
-        await status.edit_text("⚠️ Что-то пошло не так при получении видео. Попробуйте позже.")
+        await status.edit_text(t(lang, "fetch_error"))
         if user_id is not None:
             await _log_event_safe(
                 db, user_id=user_id, stage=Stage.INFO_FETCH, status=EventStatus.FAILED_ERROR
@@ -159,8 +155,8 @@ async def handle_link(
             audio_format=info.audio_format,
         )
     )
-    keyboard = build_resolution_keyboard(request_id, info.available_heights, info.sizes)
-    caption = build_caption(info.title, info.uploader, info.duration, info.view_count)
+    keyboard = build_resolution_keyboard(request_id, info.available_heights, lang, info.sizes)
+    caption = build_caption(info.title, info.uploader, info.duration, info.view_count, lang)
 
     await status.delete()
     if info.thumbnail_url:
@@ -178,6 +174,7 @@ async def _perform_download(
     semaphore: asyncio.Semaphore,
     config: Config,
     db: Database | None,
+    lang: str,
     pending: PendingDownload,
     format_selector: str,
     height: int | None,
@@ -195,7 +192,7 @@ async def _perform_download(
     с существующими данными не возникает).
     """
     user_id = callback.from_user.id
-    target_label = f"{height}p" if height is not None else "аудио"
+    target_label = f"{height}p" if height is not None else t(lang, "audio_label_short")
 
     await callback.answer()
     message = callback.message
@@ -206,19 +203,16 @@ async def _perform_download(
     position = await download_queue.position(queue_token)
     ahead = queue_ahead_count(position, config.max_concurrent_downloads)
     if ahead > 0:
-        status = await message.answer(
-            f"🕐 В очереди на скачивание — перед вами: {ahead}. "
-            "Начнём, как только освободится слот."
-        )
+        status = await message.answer(t(lang, "queue_position", ahead=ahead))
     else:
-        status = await message.answer(f"⏳ Скачиваю {target_label}...")
+        status = await message.answer(t(lang, "downloading_status", target=target_label))
 
     work_dir = Path(tempfile.mkdtemp(prefix="dl_", dir=config.downloads_dir))
     cancel_event = threading.Event()
     active_downloads[user_id] = (asyncio.current_task(), cancel_event)
     try:
         loop = asyncio.get_running_loop()
-        progress = ProgressReporter(loop, status, height)
+        progress = ProgressReporter(loop, status, height, lang)
         async with semaphore:
             filepath = await ytdlp_service.download_video(
                 pending.url, format_selector, work_dir,
@@ -230,14 +224,18 @@ async def _perform_download(
         size_bytes = filepath.stat().st_size
         if size_bytes > config.max_file_size_bytes:
             note = (
-                "Обход лимита в разработке — попробуйте разрешение поменьше."
+                t(lang, "size_limit_note_video")
                 if height is not None
-                else "Обход лимита в разработке — для этого видео аудио без "
-                "сжатия в лимит пока не помещается."
+                else t(lang, "size_limit_note_audio")
             )
             await status.edit_text(
-                f"⚠️ Файл получился {size_bytes / (1024 * 1024):.1f} МБ — это больше "
-                f"лимита Telegram для ботов ({config.max_file_size_mb} МБ). {note}"
+                t(
+                    lang,
+                    "size_limit_exceeded",
+                    size=f"{size_bytes / (1024 * 1024):.1f}",
+                    limit=config.max_file_size_mb,
+                    note=note,
+                )
             )
             await _log_event_safe(
                 db,
@@ -255,7 +253,7 @@ async def _perform_download(
             # чаще оказывается именно аплоад файла в Telegram. Без этого
             # апдейта пользователь всё это время видел бы одну и ту же
             # надпись "Собираю файл" и мог решить, что бот завис.
-            await status.edit_text(f"📤 Отправляю {target_label} в Telegram...")
+            await status.edit_text(t(lang, "sending_status", target=target_label))
         except Exception:
             pass
 
@@ -282,7 +280,7 @@ async def _perform_download(
     except ytdlp_service.DownloadCancelledError:
         logger.info("Download cancelled by user %s: %s", user_id, pending.url)
         try:
-            await status.edit_text("❌ Скачивание отменено.")
+            await status.edit_text(t(lang, "download_cancelled"))
         except Exception:
             pass
         await _log_event_safe(
@@ -301,7 +299,7 @@ async def _perform_download(
         # семантику отмены asyncio-задач.
         logger.info("Download task cancelled for user %s before/while downloading", user_id)
         try:
-            await status.edit_text("❌ Скачивание отменено.")
+            await status.edit_text(t(lang, "download_cancelled"))
         except Exception:
             pass
         await _log_event_safe(
@@ -315,7 +313,7 @@ async def _perform_download(
         raise
     except ytdlp_service.VideoUnavailableError:
         logger.info("Video became unavailable during download: %s", pending.url)
-        await status.edit_text("⚠️ Видео стало недоступно во время скачивания.")
+        await status.edit_text(t(lang, "video_unavailable_during_download"))
         await _log_event_safe(
             db,
             user_id=user_id,
@@ -326,7 +324,7 @@ async def _perform_download(
         )
     except Exception:
         logger.exception("Failed to download %s (%s)", pending.url, target_label)
-        await status.edit_text("⚠️ Не удалось скачать видео. Попробуйте ещё раз позже.")
+        await status.edit_text(t(lang, "download_failed"))
         await _log_event_safe(
             db,
             user_id=user_id,
@@ -353,6 +351,7 @@ async def handle_resolution_choice(
     callback: CallbackQuery,
     semaphore: asyncio.Semaphore,
     config: Config,
+    lang: str,
     db: Database | None = None,
 ) -> None:
     assert callback.data is not None
@@ -362,7 +361,7 @@ async def handle_resolution_choice(
 
     pending = request_cache.get(request_id)
     if pending is None:
-        await callback.answer("Ссылка устарела, отправьте видео ещё раз.", show_alert=True)
+        await callback.answer(t(lang, "link_expired"), show_alert=True)
         return
 
     if pending.video_id and await _is_blocked_safe(db, pending.video_id):
@@ -370,11 +369,7 @@ async def handle_resolution_choice(
         # когда админ заблокировал видео (см. /block в bot/handlers/admin.py)
         # — проверяем ещё раз здесь, чтобы блокировка применялась сразу же,
         # а не только к новым запросам /handle_link.
-        await callback.answer(
-            "Это видео недоступно для скачивания — доступ закрыт по запросу "
-            "правообладателя.",
-            show_alert=True,
-        )
+        await callback.answer(t(lang, "blocked_video"), show_alert=True)
         await _log_event_safe(
             db,
             user_id=user_id,
@@ -387,7 +382,7 @@ async def handle_resolution_choice(
 
     format_selector = pending.formats.get(height)
     if format_selector is None:
-        await callback.answer("Это разрешение больше недоступно.", show_alert=True)
+        await callback.answer(t(lang, "resolution_gone"), show_alert=True)
         return
 
     await _perform_download(
@@ -395,6 +390,7 @@ async def handle_resolution_choice(
         semaphore=semaphore,
         config=config,
         db=db,
+        lang=lang,
         pending=pending,
         format_selector=format_selector,
         height=height,
@@ -407,6 +403,7 @@ async def handle_audio_choice(
     callback: CallbackQuery,
     semaphore: asyncio.Semaphore,
     config: Config,
+    lang: str,
     db: Database | None = None,
 ) -> None:
     """Кнопка "🎵 Скачать аудио" — та же механика, что и у видео
@@ -419,15 +416,11 @@ async def handle_audio_choice(
 
     pending = request_cache.get(request_id)
     if pending is None:
-        await callback.answer("Ссылка устарела, отправьте видео ещё раз.", show_alert=True)
+        await callback.answer(t(lang, "link_expired"), show_alert=True)
         return
 
     if pending.video_id and await _is_blocked_safe(db, pending.video_id):
-        await callback.answer(
-            "Это видео недоступно для скачивания — доступ закрыт по запросу "
-            "правообладателя.",
-            show_alert=True,
-        )
+        await callback.answer(t(lang, "blocked_video"), show_alert=True)
         await _log_event_safe(
             db,
             user_id=user_id,
@@ -442,6 +435,7 @@ async def handle_audio_choice(
         semaphore=semaphore,
         config=config,
         db=db,
+        lang=lang,
         pending=pending,
         format_selector=pending.audio_format,
         height=None,
@@ -450,7 +444,7 @@ async def handle_audio_choice(
 
 
 @router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext) -> None:
+async def cmd_cancel(message: Message, state: FSMContext, lang: str) -> None:
     """/cancel — универсальная отмена "того, что сейчас происходит" для
     пользователя: активного скачивания и/или ожидания сообщения для
     /feedback (bot/handlers/feedback.py). Оба независимы и проверяются по
@@ -473,18 +467,18 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
         # то же статусное сообщение, что показывало прогресс).
         cancel_event.set()
         task.cancel()
-        await message.answer("Отменяю скачивание...")
+        await message.answer(t(lang, "cancelling_download"))
         cancelled_something = True
 
     if await state.get_state() == FeedbackStates.waiting_for_message.state:
         await state.clear()
-        await message.answer("Хорошо, ничего не отправляю администратору.")
+        await message.answer(t(lang, "feedback_cancelled"))
         cancelled_something = True
 
     if not cancelled_something:
-        await message.answer("Сейчас нечего отменять.")
+        await message.answer(t(lang, "nothing_to_cancel"))
 
 
 @router.message(F.text)
-async def handle_other_text(message: Message) -> None:
-    await message.answer("Пришлите, пожалуйста, ссылку на видео или Shorts с YouTube.")
+async def handle_other_text(message: Message, lang: str) -> None:
+    await message.answer(t(lang, "send_link_prompt"))

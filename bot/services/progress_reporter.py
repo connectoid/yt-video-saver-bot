@@ -25,7 +25,11 @@ class ProgressReporter:
     """
 
     def __init__(
-        self, loop: asyncio.AbstractEventLoop, status_message: Any, height: int | None
+        self,
+        loop: asyncio.AbstractEventLoop,
+        status_message: Any,
+        height: int | None,
+        lang: str,
     ) -> None:
         # height=None — скачивание аудио-кнопкой (нет разрешения), см.
         # format_audio_download_progress ниже и handlers/video.py::
@@ -33,6 +37,7 @@ class ProgressReporter:
         self._loop = loop
         self._status = status_message
         self._height = height
+        self._lang = lang
         self._lock = threading.Lock()
         self._last_sent_at: float | None = None
         self._last_fraction: float | None = None
@@ -57,9 +62,9 @@ class ProgressReporter:
             self._last_label = label
 
         if self._height is not None:
-            text = format_download_progress(self._height, fraction, label)
+            text = format_download_progress(self._height, fraction, label, self._lang)
         else:
-            text = format_audio_download_progress(fraction, label)
+            text = format_audio_download_progress(fraction, label, self._lang)
         try:
             asyncio.run_coroutine_threadsafe(self._edit(text), self._loop)
         except RuntimeError:

@@ -48,12 +48,22 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     # IETF-код языка клиента Telegram пользователя (например "ru", "en",
     # "uk") — то, что Telegram сам присылает в update.from_user.language_code,
-    # НЕ выбор языка внутри бота (у бота пока нет локализации). Собирается
-    # начиная с этой колонки как чистые данные для решения "стоит ли вообще
-    # делать RU/EN-локализацию" — см. /stats. NULL — либо пользователь ещё не
-    # писал боту после того, как колонка появилась, либо Telegram не прислал
+    # НЕ выбор языка внутри бота. Изначально собирался как чистые данные для
+    # решения "стоит ли вообще делать RU/EN-локализацию" (см. /stats) — по
+    # итогу (2026-09-07) стал ещё и дефолтным источником языка интерфейса
+    # для тех, кто не трогал /language, см. ui_language ниже и
+    # bot/i18n.py::resolve_language. NULL — либо пользователь ещё не писал
+    # боту после того, как колонка появилась, либо Telegram не прислал
     # значение (бывает у некоторых клиентов).
     language_code: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # Явный выбор языка интерфейса через /language (bot/handlers/language.py)
+    # — "ru"/"en", либо NULL, если пользователь никогда не менял язык
+    # вручную. В отличие от language_code выше (сырой сигнал от Telegram,
+    # который бот не выбирает) это осознанное решение самого пользователя и
+    # имеет приоритет: bot/i18n.py::resolve_language(language_code,
+    # ui_language) сначала смотрит сюда, и только если тут NULL — выводит
+    # язык из language_code. См. README про локализацию (2026-09-07).
+    ui_language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     first_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     last_seen_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
