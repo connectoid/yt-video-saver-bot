@@ -14,6 +14,7 @@ from bot.config import load_config
 from bot.db.engine import Database
 from bot.handlers import get_root_router
 from bot.logging_config import setup_logging
+from bot.middlewares.broadcast_capture import BroadcastCaptureMiddleware
 from bot.middlewares.feedback_capture import FeedbackCaptureMiddleware
 from bot.middlewares.user_activity import UserActivityMiddleware
 
@@ -57,6 +58,10 @@ async def main() -> None:
     # пользователь только что вызвал /feedback, следующее его сообщение
     # уходит администратору и не доходит до обычных обработчиков.
     dp.message.outer_middleware(FeedbackCaptureMiddleware())
+
+    # То же самое для /broadcast (см. bot/middlewares/broadcast_capture.py) —
+    # перехватывает два сообщения подряд (RU/EN текст рассылки) у админа.
+    dp.message.outer_middleware(BroadcastCaptureMiddleware())
 
     # Общий семафор ограничивает число одновременных скачиваний yt-dlp,
     # чтобы не положить сервер при наплыве пользователей.

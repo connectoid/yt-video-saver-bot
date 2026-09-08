@@ -209,6 +209,20 @@ async def list_blocked_videos(db: Database) -> list[BlockedVideo]:
         return list(result.scalars().all())
 
 
+async def list_users_for_broadcast(db: Database) -> list[tuple[int, str | None, str | None]]:
+    """(id, language_code, ui_language) для всех пользователей — то
+    минимальное подмножество полей, которое нужно /broadcast
+    (bot/handlers/broadcast.py) и bot/services/broadcast_service.py, чтобы
+    выбрать язык для каждого через bot/i18n.py::resolve_language. Выбираем
+    только эти три колонки select-ом, а не грузим полные User-объекты —
+    рассылка может идти по многим тысячам пользователей, лишние колонки
+    (username, full_name, first_seen_at...) тут не нужны и просто тратят
+    память."""
+    async with db.session() as session:
+        result = await session.execute(select(User.id, User.language_code, User.ui_language))
+        return [tuple(row) for row in result.all()]
+
+
 @dataclass
 class Stats:
     total_users: int
